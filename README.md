@@ -111,6 +111,15 @@ measures the live rms speed, the proton and neutron radii, and the neutron skin
 (≈ 0.17 fm in ²⁰⁸Pb and ¹⁸⁰Hf). In halo nuclei the outer nucleons sit in a
 shallow, wide well and are kept out of the filled core (Pauli exclusion).
 
+**Nucleon size and overlap.** Nucleons are drawn at 1.08 fm, the radius of a
+uniform ball with the proton's rms charge radius (√(5/3)·0.84 fm). At nuclear
+density (~1.8 fm between centers) neighbors overlap, as in reality. **Close
+pairs** tints nucleons that are momentarily under 1 fm apart, and the panel
+reports how often that happens. In real nuclei about 20% of nucleons are in such
+short-range correlated pairs, ~90% of them proton–neutron because of the tensor
+force. This simulation has no tensor force, so its pairs follow simple
+combinatorics, and the panel says so.
+
 **Ground-state shape** comes from the Nilsson–Strutinsky
 (macroscopic–microscopic) method in `js/nuclear-shape.js`:
 

@@ -4,7 +4,7 @@ import {
   isotopeFor, bindingEnergy, deformation, collectiveModes, radiusFm, isMagic, sci, densityRadii,
   allowedNeutrons, rotationPeriod, valenceCounts, BABYSECOND, NUCLEONS, QUARKS,
 } from './nucleus-data.js';
-import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, COLOR_CHARGES } from './nucleus-viewer.js';
+import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, COLOR_CHARGES } from './nucleus-viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -134,7 +134,9 @@ export function createNucleusUI() {
     const skin = stats.rn - stats.rp;
     el.innerHTML = `<li>Nucleon speed (rms): <b>${stats.v.toFixed(2)}c</b></li>
       ${iso.Z && iso.N && !iso.halo ? `<li>Proton radius (rms): ${stats.rp.toFixed(2)} fm</li><li>Neutron radius (rms): ${stats.rn.toFixed(2)} fm</li>
-      <li>Neutron skin: <b>${skin >= 0 ? '+' : ''}${skin.toFixed(2)} fm</b> <span class="muted">(input ${radii.skin.toFixed(2)})</span></li>` : ''}`;
+      ${iso.A >= 40 ? `<li>Neutron skin: <b>${skin >= 0 ? '+' : ''}${skin.toFixed(2)} fm</b> <span class="muted">(input ${radii.skin.toFixed(2)})</span></li>`
+        : '<li class="muted">Neutron skin: too few nucleons to measure reliably</li>'}` : ''}
+      ${iso.A > 2 ? `<li>Nucleons in a close pair (&lt; 1 fm): <b>${Math.round(100 * stats.pairFraction)}%</b>${stats.pnShare != null ? ` <span class="muted">· ${Math.round(100 * stats.pnShare)}% proton–neutron</span>` : ''}</li>` : ''}`;
   }
 
   function render() {
@@ -154,6 +156,7 @@ export function createNucleusUI() {
     $('#nuc-legend').innerHTML = view === 'nucleus'
       ? `<span><i style="background:${PROTON_COLOR}"></i>proton</span><span><i style="background:${NEUTRON_COLOR}"></i>neutron</span>${
         iso.halo ? `<span><i style="background:${HALO_COLOR}"></i>halo ${iso.halo.kind === 'n' ? 'neutron' : 'proton'}</span>` : ''}${
+        viewer.showPairs ? `<span><i style="background:${PAIR_COLOR}"></i>close pair</span>` : ''}${
         viewer.showQuarks ? COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]} quark</span>`).join('') : ''}`
       : `${COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]}</span>`).join('')}<span><i style="background:#ffe9a8"></i>gluon</span><span><i style="background:#9ef0ff"></i>sea quark pair</span>`;
 
@@ -202,6 +205,8 @@ export function createNucleusUI() {
       ${modeLine}
       ${haloText}
       <p class="explain">The nucleons move on their own: confined to a few femtometers, they travel at about a fifth to a third of the speed of light, crossing this nucleus in roughly ${Math.max(1, Math.round((2 * R) / (0.25 * 3))).toLocaleString()} babyseconds (1 babysecond = 10⁻²³ s, the time light takes to cross 3 fm). The ruler’s photon moves at light speed for comparison.</p>
+      <p class="explain"><b>Nucleons overlap.</b> They’re drawn at 1.08 fm, the size of a uniform ball with the proton’s measured charge radius (0.84 fm). Neighbors sit only ~1.8 fm apart, so their fuzzy edges overlap; they have no hard surface. The strong force between them is carried by pions, with a range of about 1.4 fm (ħ/m<sub>π</sub>c), so each nucleon really only feels the few it touches.</p>
+      <p class="explain"><b>Short-range correlated pairs.</b> About 20% of the time, two nucleons get much closer than their size, deep into each other, before the strong repulsive core below ~0.5 fm pushes them apart. Electron-scattering experiments (Jefferson Lab, with MIT’s nuclear physics group) find these pairs are ~90% proton–neutron, because of the tensor part of the nuclear force, and they’re linked to quarks behaving differently inside nuclei (the EMC effect). Turn on <b>Close pairs</b> to highlight nucleons closer than 1 fm. This simulation has no tensor force, so its pairs come out roughly as often for any combination; the live share it reports shows that difference from the real ~90%.</p>
       <div class="facts">
         <div><h3>Shape</h3><ul>
           <li>${iso.A < 5 ? 'Too few nucleons for a meaningful shape' : kind}${axisRatio}</li>
@@ -292,6 +297,7 @@ export function createNucleusUI() {
   $('#nuc-quarks').addEventListener('change', (e) => { viewer.setQuarks(e.target.checked); render(); });
   $('#nuc-field').addEventListener('change', (e) => viewer.setField(e.target.checked));
   $('#nuc-ruler').addEventListener('change', (e) => viewer.setRuler(e.target.checked));
+  $('#nuc-pairs').addEventListener('change', (e) => { viewer.setPairs(e.target.checked); render(); });
   $('#nuc-rotate').addEventListener('change', (e) => viewer.setAutoRotate(e.target.checked));
   const rate = $('#nuc-rate');
   function showRate() {

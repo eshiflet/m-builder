@@ -24,7 +24,13 @@ export const PROTON_COLOR = '#fff3e3';
 export const NEUTRON_COLOR = '#4f7dff';
 export const HALO_COLOR = '#7ff0ff';
 export const COLOR_CHARGES = ['#ff4d6d', '#3ddc84', '#4d8dff']; // "red", "green", "blue"
-const NUCLEON_R = 0.85; // display radius (proton charge radius)
+// Display radius: a uniform ball with the proton's rms charge radius (0.84 fm) has
+// radius √(5/3)·0.84 ≈ 1.08 fm. At nuclear density neighbors sit ~1.8 fm apart, so
+// at this size they overlap, as real nucleons do.
+const NUCLEON_R = 1.08;
+// Pairs closer than this (center to center) are highlighted as close, short-range pairs.
+const CLOSE_PAIR = 1.0;
+export const PAIR_COLOR = '#ff9f43';
 
 function textSprite(text, color, height) {
   const canvas = document.createElement('canvas');
@@ -133,6 +139,7 @@ export class NucleusViewer {
     this.showQuarks = false;
     this.showField = false;
     this.showRuler = true;
+    this.showPairs = false;
     this.timeRate = 4; // babyseconds per real second
     this.spin = 10;
     this.t = 0; // clock, in babyseconds
@@ -230,18 +237,19 @@ export class NucleusViewer {
     this.drawPos = new Float32Array(A * 3);
     this.pointGeo = new THREE.BufferGeometry();
     this.pointGeo.setAttribute('position', new THREE.BufferAttribute(this.drawPos, 3));
+    this.baseColors = colors.slice();
     this.pointGeo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
     this.pointGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 100);
     const uniforms = (size) => ({ uScale: { value: this.pixelScale }, uSize: { value: size }, uOpacity: { value: 1 } });
     this.coreMat = new THREE.ShaderMaterial({ vertexShader: GLOW_VERT, fragmentShader: CORE_FRAG, uniforms: uniforms(2 * NUCLEON_R), transparent: true });
-    this.haloMat = new THREE.ShaderMaterial({ vertexShader: GLOW_VERT, fragmentShader: HALO_FRAG, uniforms: uniforms(5 * NUCLEON_R), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.haloMat = new THREE.ShaderMaterial({ vertexShader: GLOW_VERT, fragmentShader: HALO_FRAG, uniforms: uniforms(4 * NUCLEON_R), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.cores = new THREE.Points(this.pointGeo, this.coreMat);
     this.halos = new THREE.Points(this.pointGeo, this.haloMat);
     this.cores.renderOrder = 1;
     this.halos.renderOrder = 2;
 
     this.solidMat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.05, transparent: true, opacity: 1 });
-    this.solids = new THREE.InstancedMesh(new THREE.SphereGeometry(NUCLEON_R * 1.1, 24, 16), this.solidMat, A);
+    this.solids = new THREE.InstancedMesh(new THREE.SphereGeometry(NUCLEON_R, 24, 16), this.solidMat, A);
     for (let i = 0; i < A; i++) this.solids.setColorAt(i, inHalo[i] ? hc : isProton[i] ? pc : nc);
     this.solids.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.nucleusGroup.add(this.cores, this.halos, this.solids);
@@ -267,6 +275,15 @@ export class NucleusViewer {
     this.fieldP = new THREE.Mesh(unit, shellMat('#ffd9b0'));
     this.fieldN = new THREE.Mesh(unit.clone(), shellMat(NEUTRON_COLOR));
     this.nucleusGroup.add(this.fieldP, this.fieldN);
+
+    // Close pairs: a bright bond between nucleons momentarily closer than CLOSE_PAIR.
+    this.pairGeo = new THREE.BufferGeometry();
+    this.pairGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(A * 6), 3));
+    this.pairGeo.setDrawRange(0, 0);
+    this.pairLines = new THREE.LineSegments(this.pairGeo, new THREE.LineBasicMaterial({ color: PAIR_COLOR, depthTest: false, transparent: true, opacity: 0.95 }));
+    this.pairLines.renderOrder = 5;
+    this.nucleusGroup.add(this.pairLines);
+    this.pairStats = { total: 0, pn: 0, frames: 0 };
 
     this.#buildRuler();
     this.statsTimer = 0;
@@ -428,6 +445,7 @@ export class NucleusViewer {
   setQuarks(on) { this.showQuarks = on; this.#applyVisibility(); }
   setField(on) { this.showField = on; this.#applyVisibility(); }
   setRuler(on) { this.showRuler = on; this.#applyVisibility(); }
+  setPairs(on) { this.showPairs = on; this.#applyVisibility(); }
   setStyle(style) { this.style = style; this.#applyVisibility(); }
   setAutoRotate(on) { this.controls.autoRotate = on; }
 
@@ -455,6 +473,7 @@ export class NucleusViewer {
     this.solidMat.depthWrite = !this.showQuarks;
     this.quarks.visible = this.gluons.visible = this.showQuarks;
     this.fieldP.visible = this.fieldN.visible = this.showField;
+    this.pairLines.visible = this.showPairs;
   }
 
   // ---------- single nucleon close-up ----------
@@ -655,12 +674,56 @@ export class NucleusViewer {
       if (recolor) this.#colorQuarks();
     }
 
+    this.#updatePairs(out);
     this.onClock?.(this.t, this.lagging);
     this.statsTimer += dt;
     if (this.onStats && this.statsTimer > 0.5) {
       this.statsTimer = 0;
       this.onStats(this.#stats());
     }
+  }
+
+  /** Find pairs closer than CLOSE_PAIR; draw them and keep running counts. */
+  #updatePairs(out) {
+    const { isProton } = this;
+    const n = out.length / 3;
+    const lines = this.pairGeo.attributes.position.array;
+    const c2 = CLOSE_PAIR * CLOSE_PAIR;
+    let count = 0, pn = 0;
+    const inPair = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = out[3 * i] - out[3 * j], dy = out[3 * i + 1] - out[3 * j + 1], dz = out[3 * i + 2] - out[3 * j + 2];
+        if (dx * dx + dy * dy + dz * dz >= c2) continue;
+        if (isProton[i] !== isProton[j]) pn++;
+        inPair[i] = inPair[j] = 1;
+        if (count < n) {
+          lines.set([out[3 * i], out[3 * i + 1], out[3 * i + 2], out[3 * j], out[3 * j + 1], out[3 * j + 2]], count * 6);
+        }
+        count++;
+      }
+    }
+    if (this.showPairs || this.pairsTinted) {
+      this.pairGeo.setDrawRange(0, this.showPairs ? Math.min(count, n) * 2 : 0);
+      this.pairGeo.attributes.position.needsUpdate = true;
+      // Tint nucleons that are in a close pair right now.
+      const colors = this.pointGeo.attributes.aColor;
+      const pc = new THREE.Color(PAIR_COLOR), c = new THREE.Color();
+      for (let i = 0; i < n; i++) {
+        c.fromArray(this.baseColors, 3 * i);
+        if (this.showPairs && inPair[i]) c.lerp(pc, 0.75);
+        c.toArray(colors.array, 3 * i);
+        this.solids.setColorAt(i, c);
+      }
+      colors.needsUpdate = true;
+      this.solids.instanceColor.needsUpdate = true;
+      this.pairsTinted = this.showPairs; // one more pass after turning off restores the colors
+    }
+    // Running averages: share of nucleons in a close pair, and the proton–neutron share of pairs.
+    const s = this.pairStats;
+    const w = 1 / Math.min(++s.frames, 120);
+    s.fraction = (s.fraction ?? 0) + ((inPair.reduce((a, b) => a + b, 0) / n) - (s.fraction ?? 0)) * w;
+    if (count) s.pnShare = (s.pnShare ?? pn / count) + (pn / count - (s.pnShare ?? pn / count)) * w;
   }
 
   /** Live measurements from the simulation: rms speed and proton/neutron rms radii. */
@@ -681,9 +744,11 @@ export class NucleusViewer {
     // Running average so the numbers settle instead of flickering.
     if (!this.statAvg || this.statAvg.A !== this.iso.A) this.statAvg = { ...now, A: this.iso.A, k: 1 };
     else {
-      const a = this.statAvg, w = 1 / Math.min(++a.k, 30);
+      const a = this.statAvg, w = 1 / Math.min(++a.k, 300);
       for (const key of ['v', 'rp', 'rn']) a[key] += (now[key] - a[key]) * w;
     }
+    this.statAvg.pairFraction = this.pairStats?.fraction ?? 0;
+    this.statAvg.pnShare = this.pairStats?.pnShare ?? null;
     return this.statAvg;
   }
 
