@@ -501,3 +501,22 @@ input[type="checkbox"] { accent-color: var(--accent); }
   .segmented button { padding: 4px 8px; }
   .control { flex-wrap: wrap; min-width: 0; }
 }
+
+.nilsson-chart { width: 100%; max-width: 560px; height: auto; margin-top: 6px; display: block; }
+.nilsson-chart .axis { stroke: var(--line); }
+.nilsson-chart .zero { stroke: var(--line); stroke-dasharray: 2 3; }
+.nilsson-chart .lbl { fill: var(--muted); font-size: 10px; }
+.nilsson-chart .lbl.sph { fill: var(--text); font-size: 10px; }
+.nilsson-chart .hl { fill: #ffd75e; font-size: 10px; }
+.nilsson-chart .magic { fill: #ffd75e; font-size: 12px; font-weight: 700; }
+.nilsson-chart .gs { stroke: #ffd75e; stroke-dasharray: 4 3; opacity: 0.7; }
+.nilsson-chart .cur { stroke: #ffffff; opacity: 0.6; }
+.nilsson-chart .fermi { stroke: #ffd75e; stroke-dasharray: 6 4; opacity: 0.55; }
+.nilsson-chart .orb { fill: none; stroke-width: 1.4; opacity: 0.85; }
+.nilsson-chart .orb.neg { stroke-dasharray: 5 3; }
+.nilsson-chart .hit { fill: none; stroke: transparent; stroke-width: 7; cursor: pointer; }
+.nilsson-chart .nil-line:hover .orb { stroke-width: 2.6; opacity: 1; }
+.nilsson-chart .nil-line.sel .orb { stroke-width: 3; opacity: 1; }
+.nilsson-chart .occ { fill: #ffffff; stroke: #0b0e14; stroke-width: 1; pointer-events: none; }
+.nilsson-chart .occ.half { fill: #ffd75e; }
+.badge { display: inline-block; padding: 0 6px; border-radius: 6px; background: #ffd75e; color: #0b0e14; font-size: 11px; font-weight: 600; }

@@ -82,41 +82,48 @@ function r2(N, lp, l) {
 const y20 = (lp, l, L) => Math.sqrt((5 * (2 * l + 1)) / (4 * Math.PI * (2 * lp + 1))) * cg(l, 0, 2, 0, lp, 0) * cg(l, L, 2, 0, lp, L);
 
 /**
+ * One (N, Ω) block of the Nilsson Hamiltonian in units of ħω̊₀, in the basis |N l Λ Σ⟩.
+ * Levels of the same N and Ω never cross, so sorting a block's eigenvalues tracks each
+ * orbital continuously as δ changes.
+ */
+export function nilssonBlock(delta, kind, N, twoOmega) {
+  const omegaRatio = (1 - (4 / 3) * delta * delta - (16 / 27) * delta ** 3) ** (-1 / 6);
+  const betaP = (4 / 3) * Math.sqrt(Math.PI / 5) * delta;
+  const [kappa, mu] = KAPPA_MU[kind][Math.min(N, 11)];
+  const l2avg = (N * (N + 3)) / 2;
+  const Omega = twoOmega / 2;
+  const basis = []; // { l, L (Λ), S (Σ) }
+  for (let l = N; l >= 0; l -= 2) {
+    for (const S of [0.5, -0.5]) {
+      const L = Omega - S;
+      if (Math.abs(L) <= l) basis.push({ l, L, S });
+    }
+  }
+  const H = basis.map((bi) => basis.map((bj) => {
+    let h = 0;
+    if (bi.S === bj.S && bi.L === bj.L) {
+      h += omegaRatio * ((bi.l === bj.l ? N + 1.5 : 0) - betaP * r2(N, bi.l, bj.l) * y20(bi.l, bj.l, bj.L));
+    }
+    if (bi.l === bj.l) {
+      const l = bi.l;
+      // l·s: diagonal Λ·Σ, and ½√((l−Λ)(l+Λ+1)) between |Λ,+½⟩ and |Λ+1,−½⟩.
+      if (bi.L === bj.L && bi.S === bj.S) h += -2 * kappa * bi.L * bi.S - kappa * mu * (l * (l + 1) - l2avg);
+      const lo = bi.S > 0 ? bi : bj, hi = bi.S > 0 ? bj : bi;
+      if (bi.S !== bj.S && hi.L === lo.L + 1) h += -2 * kappa * 0.5 * Math.sqrt((l - lo.L) * (l + lo.L + 1));
+    }
+    return h;
+  }));
+  return { basis, H, kappa, mu };
+}
+
+/**
  * Nilsson single-particle energies (units of ħω̊₀), one entry per Kramers-degenerate
  * pair, for shells 0..Nmax at deformation δ.
  */
 function nilssonLevels(delta, kind, Nmax) {
-  const omegaRatio = (1 - (4 / 3) * delta * delta - (16 / 27) * delta ** 3) ** (-1 / 6);
-  const betaP = (4 / 3) * Math.sqrt(Math.PI / 5) * delta;
   const levels = [];
   for (let N = 0; N <= Nmax; N++) {
-    const [kappa, mu] = KAPPA_MU[kind][Math.min(N, 11)];
-    const l2avg = (N * (N + 3)) / 2;
-    for (let twoOmega = 1; twoOmega <= 2 * N + 1; twoOmega += 2) {
-      const Omega = twoOmega / 2;
-      const basis = []; // { l, L (Λ), S (Σ) }
-      for (let l = N; l >= 0; l -= 2) {
-        for (const S of [0.5, -0.5]) {
-          const L = Omega - S;
-          if (Math.abs(L) <= l) basis.push({ l, L, S });
-        }
-      }
-      const H = basis.map((bi) => basis.map((bj) => {
-        let h = 0;
-        if (bi.S === bj.S && bi.L === bj.L) {
-          h += omegaRatio * ((bi.l === bj.l ? N + 1.5 : 0) - betaP * r2(N, bi.l, bj.l) * y20(bi.l, bj.l, bj.L));
-        }
-        if (bi.l === bj.l) {
-          const l = bi.l;
-          // l·s: diagonal Λ·Σ, and ½√((l−Λ)(l+Λ+1)) between |Λ,+½⟩ and |Λ+1,−½⟩.
-          if (bi.L === bj.L && bi.S === bj.S) h += -2 * kappa * bi.L * bi.S - kappa * mu * (l * (l + 1) - l2avg);
-          const lo = bi.S > 0 ? bi : bj, hi = bi.S > 0 ? bj : bi;
-          if (bi.S !== bj.S && hi.L === lo.L + 1) h += -2 * kappa * 0.5 * Math.sqrt((l - lo.L) * (l + lo.L + 1));
-        }
-        return h;
-      }));
-      levels.push(...eigenvalues(H));
-    }
+    for (let twoOmega = 1; twoOmega <= 2 * N + 1; twoOmega += 2) levels.push(...eigenvalues(nilssonBlock(delta, kind, N, twoOmega).H));
   }
   return levels.sort((x, y) => x - y);
 }

@@ -39,6 +39,19 @@ export const PION_COLORS = { '+': '#ff6bd6', '-': '#7dff6b', 0: '#e6e6e6' };
 const PION_RANGE = 2.0; // fm, center to center, for picking an exchange partner
 const PION_FLIGHT = 0.7; // seconds on screen per exchange (real: ~0.5 bs, slowed to be visible)
 
+function dotTexture() { // fresh each time: #disposeGroup disposes material maps
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.4, 'rgba(255,255,255,0.6)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
 function textSprite(text, color, height) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -137,7 +150,8 @@ export class NucleusViewer {
     this.nucleusGroup = new THREE.Group();
     this.nucleonGroup = new THREE.Group(); // single proton / neutron close-up
     this.rulerGroup = new THREE.Group();
-    this.scene.add(this.nucleusGroup, this.nucleonGroup, this.rulerGroup);
+    this.orbitalGroup = new THREE.Group(); // one shell-model orbital
+    this.scene.add(this.nucleusGroup, this.nucleonGroup, this.rulerGroup, this.orbitalGroup);
 
     this.mode = 'none';
     this.view = 'nucleus';
@@ -881,7 +895,8 @@ export class NucleusViewer {
   #applyVisibility() {
     const nuc = this.view === 'nucleus';
     this.nucleusGroup.visible = nuc;
-    this.nucleonGroup.visible = !nuc;
+    this.nucleonGroup.visible = this.view === 'nucleon';
+    this.orbitalGroup.visible = this.view === 'orbital';
     this.rulerGroup.visible = nuc && this.showRuler;
     if (!this.cores) return;
     const glow = this.style === 'glow';
@@ -897,6 +912,46 @@ export class NucleusViewer {
     this.fieldP.visible = this.fieldN.visible = this.showField;
     this.pairLines.visible = this.showPairs;
     this.mesonPoints.visible = this.showMesons;
+  }
+
+  // ---------- shell-model orbital ----------
+
+  /**
+   * Show one orbital's density as a point cloud. sample: { pos, spin, count } in fm with
+   * z the symmetry axis; surface: { a, c } semi-axes (fm) of the nucleus, drawn faintly.
+   */
+  setOrbital(sample, surface, colors, refit = false) {
+    this.#disposeGroup(this.orbitalGroup);
+    const g = this.orbitalGroup;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(sample.pos, 3));
+    const col = new Float32Array(sample.count * 3);
+    const up = new THREE.Color(colors.up), down = new THREE.Color(colors.down);
+    for (let i = 0; i < sample.count; i++) (sample.spin[i] ? up : down).toArray(col, i * 3);
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.add(new THREE.Points(geo, new THREE.PointsMaterial({
+      size: 0.22, map: dotTexture(), vertexColors: true, transparent: true, opacity: 0.8,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    })));
+    // The nuclear surface (half-density radius) and the symmetry axis, for scale.
+    const shell = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 24, 12),
+      new THREE.MeshBasicMaterial({ color: '#8fa3c8', wireframe: true, transparent: true, opacity: 0.07, depthWrite: false }),
+    );
+    shell.rotation.x = Math.PI / 2; // the sphere's poles (local y) onto z
+    shell.scale.set(surface.a, surface.c, surface.a);
+    g.add(shell);
+    const L = Math.max(surface.c, sample.extent ?? 0) * 1.15;
+    const axis = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -L), new THREE.Vector3(0, 0, L)]),
+      new THREE.LineDashedMaterial({ color: '#c9b46a', dashSize: 0.4, gapSize: 0.3, transparent: true, opacity: 0.6 }),
+    );
+    axis.computeLineDistances();
+    const label = textSprite('symmetry axis', '#c9b46a', Math.max(0.35, L / 18));
+    label.position.set(0, 0, L + 0.6);
+    g.add(axis, label);
+    this.orbitalExtent = Math.max(surface.c, surface.a, sample.extent * 0.6);
+    if (refit && this.view === 'orbital') this.fit();
   }
 
   // ---------- single nucleon close-up ----------
@@ -1004,7 +1059,7 @@ export class NucleusViewer {
     if (this.view === 'nucleon' && this.closeup) {
       this.tVisual = (this.tVisual ?? 0) + dt;
       this.#tickNucleon(dt, this.tVisual);
-    } else if (this.pos) {
+    } else if (this.pos && this.view === 'nucleus') {
       this.#tickNucleus(dt);
     }
     this.controls.update();
@@ -1263,7 +1318,8 @@ export class NucleusViewer {
   }
 
   fit() {
-    const R = this.view === 'nucleon' ? (this.closeup?.R ?? 0.9) * 1.25 : this.#extent() + 1.5;
+    const R = this.view === 'nucleon' ? (this.closeup?.R ?? 0.9) * 1.25
+      : this.view === 'orbital' ? (this.orbitalExtent ?? 6) : this.#extent() + 1.5;
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
     const dist = R / Math.sin(Math.min(vfov, hfov) / 2);

@@ -216,6 +216,24 @@ others are predicted from the mass formula and labeled as such.
 
 After a decay, **Show** jumps to the daughter nucleus.
 
+**Shell model** (a View option) shows the Nilsson diagram: the energy of every
+proton or neutron orbital versus deformation δ, from the deformed shell model
+(a stretched harmonic oscillator plus spin–orbit and l² terms, with
+Bengtsson–Ragnarsson κ and μ, diagonalized in each oscillator shell). At δ = 0
+the levels bunch into the spherical shells (1s1/2, 1p3/2, …) and the gaps give
+the magic numbers 2, 8, 20, 28, 50, 82, 126. Deforming splits each j level into
+orbitals labeled by Ω (the spin's projection on the symmetry axis) and parity.
+Dots mark the filled orbitals at the nucleus's ground-state deformation. The
+Fermi level and the unpaired nucleon's orbital come from BCS pairing
+(Δ = 12/√A MeV). For odd-A nuclei the panel predicts the ground-state spin
+(Ω if deformed, j if round) and compares it with the measured value for 77
+nuclei. It gets 53 right; most misses are cases known to need residual
+interactions. Click a line to see that orbital in 3D: the probability density
+of one nucleon, colored by its spin-up and spin-down parts, inside the
+nuclear surface. Drag **Deformation δ** to watch the orbitals reshape:
+low-Ω orbitals gather at the tips of a prolate nucleus, high-Ω ones ring
+its waist.
+
 **Chart of nuclides** (a View option) lays out every known and predicted
 nucleus as a square: neutrons N across, protons Z up. The ~250 stable nuclei
 form the valley of stability, which follows N = Z for light elements and bends
@@ -270,6 +288,7 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - `js/forcefield.js`: force field (including H-bonds), FIRE minimizer, conformer search, and docking
 - `js/conformer-worker.js`: runs the conformer search off the main thread
 - `js/vibrations.js`: valence force field, normal modes, IR intensities, measured reference frequencies
+- `js/nilsson.js`: Nilsson diagram, BCS filling, orbital wavefunctions and sampling, measured spins
 - `js/nuclide-chart.js`: chart of nuclides canvas (zoom, pan, pick)
 - `js/eht.js`: Extended Hückel molecular orbitals (STO-3G overlaps, Jacobi eigensolver)
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)

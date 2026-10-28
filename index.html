@@ -98,6 +98,7 @@
             <button data-value="nucleus" class="on">Nucleus</button>
             <button data-value="proton">Inside a proton</button>
             <button data-value="neutron">Inside a neutron</button>
+            <button data-value="shell">Shell model</button>
             <button data-value="chart">Chart of nuclides</button>
           </div>
         </div>
@@ -116,6 +117,19 @@
             <button id="nuc-iso-up" aria-label="One more neutron">+</button>
           </div>
         </div>
+        <div class="control" id="nuc-shell-wrap" hidden>
+          <span class="control-label">Orbitals of</span>
+          <div class="segmented" id="nuc-shell-kind">
+            <button data-value="n" class="on">Neutrons</button>
+            <button data-value="p">Protons</button>
+          </div>
+        </div>
+        <label class="control" id="nuc-delta-wrap" hidden>
+          <span class="control-label">Deformation δ</span>
+          <input id="nuc-delta" type="range" min="-0.3" max="0.4" step="0.01" value="0">
+          <span id="nuc-delta-value" class="iso-value"></span>
+          <button id="nuc-delta-reset" class="chip" type="button">Ground state</button>
+        </label>
         <div class="control" id="nuc-decay-wrap">
           <span class="control-label">Decay &amp; reactions</span>
           <div id="nuc-decay" class="examples"></div>

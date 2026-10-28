@@ -6,6 +6,7 @@ import {
   decayInfo, alphaTunneling, fissionBarrier, fissionSplit, halfLifeText, bindingOf, AMU_MEV,
 } from './nucleus-data.js';
 import { NuclideChart, MODE_COLORS, describeCell } from './nuclide-chart.js';
+import { nilssonDiagram, fillLevels, orbital, samplePoints, shellsFor, omegaText, MEASURED_SPIN } from './nilsson.js';
 import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, PION_COLORS, COLOR_CHARGES } from './nucleus-viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -33,6 +34,79 @@ const bsText = (T) => {
   return `${bs < 100 ? bs.toFixed(0) : about(bs)} babyseconds`;
 };
 const isoLabel = (iso) => `<sup>${iso.A}</sup>${iso.symbol}`;
+
+// ---------- shell model (Nilsson diagram) ----------
+
+const DELTAS = Array.from({ length: 71 }, (_, i) => Math.round(i - 30) / 100); // −0.30 … 0.40
+const I0 = DELTAS.indexOf(0);
+const OMEGA_COLORS = ['#9ad1ff', '#7ee0a8', '#ffd75e', '#ff9f6b', '#ff6b9a', '#c78bff', '#6bd6ff', '#e6e6e6', '#b5ff6b', '#ffb3e6'];
+const SPIN_COLORS = { up: '#ffb35c', down: '#5cc8ff' };
+const supParity = (p) => (p === '+' ? '⁺' : '⁻');
+const diagramCache = new Map();
+function diagramFor(kind, Nmax) {
+  const key = `${kind}${Nmax}`;
+  if (!diagramCache.has(key)) diagramCache.set(key, nilssonDiagram(kind, Nmax, DELTAS));
+  return diagramCache.get(key);
+}
+
+/** Single-particle energy E(δ) for every orbital, with the filled ones marked at δ. */
+function nilssonSVG(diag, fill, delta, delta0, pickId) {
+  const W = 560, H = 430, ml = 62, mr = 34, mt = 14, mb = 34;
+  const dmin = DELTAS[0], dmax = DELTAS[DELTAS.length - 1];
+  const x = (d) => ml + ((d - dmin) / (dmax - dmin)) * (W - ml - mr);
+  const lowest = Math.min(...diag.lines.map((l) => Math.min(...l.E)));
+  const emin = Math.max(lowest - 0.08, fill.fermi - 1.45), emax = fill.fermi + 1.1;
+  const y = (E) => mt + ((emax - E) / (emax - emin)) * (H - mt - mb);
+  const parts = [];
+  parts.push(`<defs><clipPath id="nil-clip"><rect x="${ml}" y="${mt}" width="${W - ml - mr}" height="${H - mt - mb}"/></clipPath></defs>`);
+  // Axes and ticks.
+  parts.push(`<line class="axis" x1="${ml}" y1="${H - mb}" x2="${W - mr}" y2="${H - mb}"/><line class="axis" x1="${ml}" y1="${mt}" x2="${ml}" y2="${H - mb}"/>`);
+  for (let d = -0.3; d <= 0.401; d += 0.1) parts.push(`<text class="lbl" x="${x(d)}" y="${H - mb + 13}" text-anchor="middle">${d.toFixed(1)}</text>`);
+  parts.push(`<text class="lbl" x="${x(-0.15)}" y="${H - 4}" text-anchor="middle">← oblate</text><text class="lbl" x="${x(0)}" y="${H - 4}" text-anchor="middle">δ</text><text class="lbl" x="${x(0.25)}" y="${H - 4}" text-anchor="middle">prolate →</text>`);
+  for (let e = Math.ceil(emin * 2) / 2; e <= emax; e += 0.5) parts.push(`<text class="lbl" x="${W - mr + 4}" y="${y(e) + 3}">${e.toFixed(1)}</text>`);
+  parts.push(`<text class="lbl" x="${W - 4}" y="${mt + 2}" text-anchor="end">ħω₀</text>`);
+  parts.push(`<line class="zero" x1="${x(0)}" y1="${mt}" x2="${x(0)}" y2="${H - mb}"/>`);
+  // Ground-state and current deformation.
+  parts.push(`<line class="gs" x1="${x(delta0)}" y1="${mt}" x2="${x(delta0)}" y2="${H - mb}"/><text class="hl" x="${x(delta0) + 3}" y="${mt + 10}">ground state</text>`);
+  if (Math.abs(delta - delta0) > 0.004) parts.push(`<line class="cur" x1="${x(delta)}" y1="${mt}" x2="${x(delta)}" y2="${H - mb}"/>`);
+  // Orbitals.
+  const lines = [];
+  for (const l of diag.lines) {
+    if (Math.max(...l.E) < emin || Math.min(...l.E) > emax) continue;
+    const d = l.E.map((E, i) => `${i ? 'L' : 'M'}${x(DELTAS[i]).toFixed(1)},${y(E).toFixed(1)}`).join('');
+    const color = OMEGA_COLORS[((l.twoOmega - 1) / 2) % OMEGA_COLORS.length];
+    const tip = `${omegaText(l.twoOmega)}${supParity(l.parity)} from ${l.label}`;
+    lines.push(`<g class="nil-line${l.id === pickId ? ' sel' : ''}" data-line="${l.id}"><title>${tip}</title>
+      <path class="hit" d="${d}"/><path class="orb${l.parity === '−' ? ' neg' : ''}" d="${d}" style="stroke:${l.id === pickId ? '#ffffff' : color}"/></g>`);
+  }
+  parts.push(`<g clip-path="url(#nil-clip)">${lines.join('')}`);
+  // Filled orbitals at the current δ.
+  for (const lv of fill.levels) {
+    if (!lv.occ || lv.E < emin || lv.E > emax) continue;
+    parts.push(`<circle class="occ${lv.occ === 1 ? ' half' : ''}" cx="${x(delta)}" cy="${y(lv.E)}" r="3.6"/>`);
+  }
+  parts.push(`<line class="fermi" x1="${ml}" y1="${y(fill.fermi)}" x2="${W - mr}" y2="${y(fill.fermi)}"/></g>`);
+  parts.push(`<text class="hl" x="${W - mr - 2}" y="${y(fill.fermi) - 4}" text-anchor="end">Fermi level</text>`);
+  // Spherical labels at δ = 0, and the magic numbers in the gaps.
+  const sph = new Map();
+  for (const l of diag.lines) if (!sph.has(l.label)) sph.set(l.label, l.E[I0]);
+  let lastY = Infinity;
+  for (const [label, E] of [...sph].sort((a, b) => a[1] - b[1])) {
+    const yy = y(E);
+    if (E < emin || E > emax || lastY - yy < 11) continue;
+    parts.push(`<text class="lbl sph" x="${ml - 5}" y="${yy + 3}" text-anchor="end">${label}</text>`);
+    lastY = yy;
+  }
+  const at0 = diag.lines.map((l) => l.E[I0]).sort((a, b) => a - b);
+  let filled = 0;
+  for (let i = 0; i < at0.length - 1; i++) {
+    filled += 2;
+    const gap = at0[i + 1] - at0[i];
+    const mid = (at0[i] + at0[i + 1]) / 2;
+    if (gap > 0.3 && mid > emin && mid < emax) parts.push(`<text class="magic" x="${x(0) - 4}" y="${y(mid) + 4}" text-anchor="end">${filled}</text>`);
+  }
+  return `<svg class="nilsson-chart" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`;
+}
 
 // Time-rate slider: 0–100 ↦ 0.5 to 2000 babyseconds per real second (log scale).
 const rateFromSlider = (v) => 0.5 * 4000 ** (v / 100);
@@ -147,6 +221,8 @@ export function createNucleusUI({ onElementChange } = {}) {
   let eventInfo = null; // the decay or reaction playing, if any
   let chart = null; // the chart of nuclides, built the first time it's shown
   let chartPick = null; // the square picked on the chart
+  let shellPref = 'n', shellKind = 'n', shellDelta = null, shellPick = null; // shell model: δ null = ground state, pick null = valence
+  let shellKey = '';
   let active = false;
 
   viewer.onScaleChange = (fm) => { $('#nuc-scale').textContent = `view width ≈ ${fm < 10 ? fm.toFixed(1) : fm.toFixed(0)} fm`; };
@@ -175,6 +251,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     radii = iso.halo ? densityRadii(iso.Z - (iso.halo.kind === 'p' ? iso.halo.halo : 0), iso.halo.core) : densityRadii(iso.Z, iso.N);
     viewer.setNucleus(iso, shape.beta, radii, periods(), modes.rotation?.E ?? null);
     stats = null;
+    shellDelta = null; shellPick = null;
     if (preferred === 'auto') setMode(suggestedMode().mode);
     else if (preferred === 'none' || modes[preferred]) setMode(preferred);
     else setMode('none');
@@ -256,7 +333,9 @@ export function createNucleusUI({ onElementChange } = {}) {
       b.title = m === 'auto' ? 'Pick the motion that suits each nucleus' : m === 'none' ? '' : modes[m] ? `${energyText(modes[m].E)} · ${m === 'rotation' ? 'see spin' : bsText(modes[m].T)}`
         : m === 'rotation' ? 'Only deformed nuclei rotate' : 'Needs at least 4 nucleons';
     });
-    for (const id of ['nuc-mode-wrap', 'nuc-quarks-wrap', 'nuc-mesons-wrap', 'nuc-motion-wrap', 'nuc-iso-wrap', 'nuc-rate-wrap', 'nuc-extra-wrap']) $(`#${id}`).hidden = view !== 'nucleus';
+    for (const id of ['nuc-mode-wrap', 'nuc-quarks-wrap', 'nuc-mesons-wrap', 'nuc-motion-wrap', 'nuc-rate-wrap', 'nuc-extra-wrap']) $(`#${id}`).hidden = view !== 'nucleus';
+    $('#nuc-iso-wrap').hidden = view !== 'nucleus' && view !== 'shell';
+    $('#nuc-shell-wrap').hidden = $('#nuc-delta-wrap').hidden = view !== 'shell';
     $('#nuc-spin-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
     $('#nuc-flow-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
     $('#nuc-clock').hidden = view !== 'nucleus';
@@ -275,6 +354,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     renderDecayButtons();
     $('#nuc-chart-wrap').hidden = view !== 'chart';
     if (view === 'chart') return renderChart();
+    if (view === 'shell') return renderShell();
     if (view !== 'nucleus') return renderNucleon();
     if (eventInfo) return renderEvent();
 
@@ -529,6 +609,79 @@ export function createNucleusUI({ onElementChange } = {}) {
       <p class="note">Brighter squares are measured (stable lists, plus decay data for about 60 nuclides here); faded ones are predicted from the semi-empirical mass formula, including the drip lines. About 3,300 nuclei have been observed so far; models predict roughly 6,000–7,000 bound ones in all. Color by <b>Binding energy</b> to see the iron–nickel peak that makes both fusion of light nuclei and fission of heavy ones release energy.</p>`;
   }
 
+  function renderShell() {
+    shellKind = (shellPref === 'p' ? iso.Z : iso.N) === 0 ? (shellPref === 'p' ? 'n' : 'p') : shellPref;
+    document.querySelectorAll('#nuc-shell-kind button').forEach((b) => {
+      b.classList.toggle('on', b.dataset.value === shellKind);
+      b.disabled = (b.dataset.value === 'p' ? iso.Z : iso.N) === 0;
+    });
+    const count = shellKind === 'p' ? iso.Z : iso.N;
+    const who = shellKind === 'p' ? 'proton' : 'neutron';
+    const delta0 = Math.max(-0.3, Math.min(0.4, Math.round(95 * shape.beta) / 100));
+    const delta = shellDelta ?? delta0;
+    $('#nuc-delta').value = delta;
+    $('#nuc-delta-value').textContent = `${delta >= 0 ? '+' : '−'}${Math.abs(delta).toFixed(2)}`;
+    const Nmax = shellsFor(count);
+    const diag = diagramFor(shellKind, Nmax);
+    const fill = fillLevels(shellKind, count, delta, Nmax, iso.A);
+    const pickId = shellPick ?? fill.valence.id;
+    const lv = fill.levels.find((l) => l.id === pickId) ?? fill.valence;
+    const [N, twoOmega, k] = lv.id.split(',').map(Number);
+    const orb = orbital(delta, shellKind, N, twoOmega, k);
+
+    // 3D cloud, resampled only when something it depends on changes.
+    const key = `${iso.Z},${iso.A},${shellKind},${lv.id},${delta}`;
+    if (key !== shellKey) {
+      const refit = shellKey.split(',').slice(0, 3).join() !== key.split(',').slice(0, 3).join();
+      shellKey = key;
+      const sample = samplePoints(orb, delta, iso.A, iso.A > 100 ? 22000 : 16000);
+      const R = radiusFm(iso.A), beta = delta / 0.95;
+      viewer.setOrbital(sample, { a: R * (1 - 0.3154 * beta), c: R * (1 + 0.6308 * beta) }, SPIN_COLORS, refit);
+    }
+
+    const hw = 41 / Math.cbrt(iso.A);
+    const sym = `${omegaText(twoOmega)}${supParity(lv.parity)}`;
+    const status = lv.occ === 2 ? 'filled (two nucleons, Ω and −Ω)' : lv.occ === 1 ? 'half filled: one unpaired nucleon' : 'empty';
+    const rel = (lv.E - fill.fermi) * hw;
+    const lName = 'spdfghij';
+    const mix = orb.lMix.filter(([, w]) => w > 0.02).map(([l, w]) => `${Math.round(100 * w)}% ${lName[l]}`).join(' · ');
+    $('#nuc-title').innerHTML = `<span><strong>${lv.label} · Ω<sup>π</sup> = ${sym}</strong><br><span class="muted">${who} orbital in ${isoLabel(iso)} · δ = ${delta.toFixed(2)}</span></span>`;
+    $('#nuc-caption').innerHTML = '';
+    $('#nuc-scale').textContent = '';
+    $('#nuc-legend').innerHTML = `<span><i style="background:${SPIN_COLORS.up}"></i>spin up (Λ = Ω − ½)</span><span><i style="background:${SPIN_COLORS.down}"></i>spin down (Λ = Ω + ½)</span><span><i style="background:#8fa3c8"></i>nuclear surface</span>`;
+
+    // Ground-state spin from the odd nucleon (even–even nuclei are always 0⁺).
+    const oddKind = iso.Z % 2 ? (iso.N % 2 ? 'both' : 'p') : iso.N % 2 ? 'n' : null;
+    let predict = '';
+    if (iso.A === 1) predict = '';
+    else if (!oddKind) predict = `<p class="explain"><b>Ground-state spin:</b> with even numbers of protons and of neutrons, every orbital holds a pair with opposite Ω, so the spins cancel: 0⁺, as for every even–even nucleus.</p>`;
+    else if (oddKind === 'both') predict = '<p class="explain"><b>Ground-state spin:</b> an odd proton and an odd neutron both contribute, so the spin depends on how they couple (odd–odd nuclei are the hardest case).</p>';
+    else {
+      const f0 = fillLevels(oddKind, oddKind === 'p' ? iso.Z : iso.N, delta0, shellsFor(oddKind === 'p' ? iso.Z : iso.N), iso.A);
+      const v = f0.valence;
+      const deformed = Math.abs(delta0) >= 0.05;
+      const spin = `${deformed ? v.twoOmega : +v.label.match(/(\d+)\/2$/)[1]}/2${v.parity === '+' ? '+' : '-'}`;
+      const meas = MEASURED_SPIN[`${iso.Z},${iso.A}`];
+      const fmt = (t) => t.replace('+', '⁺').replace('-', '⁻');
+      predict = `<p class="explain"><b>Ground-state spin:</b> the paired nucleons cancel, so the spin comes from the one unpaired ${oddKind === 'p' ? 'proton' : 'neutron'}, which sits in the orbital nearest the Fermi level (pairing smears the filling there), the ${v.label}${deformed ? ` Ω = ${omegaText(v.twoOmega)}` : ''} orbital. ${deformed
+        ? 'In a deformed nucleus the spin equals Ω, the projection on the symmetry axis'
+        : 'In a round nucleus the spin is the orbital’s j'}: predicted <b>${fmt(spin)}</b>${meas ? `, measured <b>${fmt(meas)}</b> ${meas === spin ? '✓' : '✗ (the simple model misses this one: residual interactions or a different shape reorder nearby levels)'}` : ''}.</p>`;
+    }
+
+    $('#nuc-info').innerHTML = `
+      <div class="info-head"><div><h2>Shell model <span class="muted">· ${who}s of ${isoLabel(iso)}</span></h2>
+        <div class="muted">${count} ${who}s · ground-state δ = ${delta0.toFixed(2)} · ħω₀ = 41/A<sup>1/3</sup> = ${hw.toFixed(1)} MeV</div></div></div>
+      <div class="chart-card"><div class="big">${sym}</div><div><b>${lv.label}${Math.abs(delta) >= 0.005 ? `, Ω = ${omegaText(twoOmega)}` : `, m = ${omegaText(twoOmega)}`}</b>${lv.id === fill.valence.id ? ' <span class="badge">valence</span>' : ''}<br>
+        <span class="muted">${status} · ${rel >= 0 ? '+' : '−'}${Math.abs(rel).toFixed(1)} MeV from the Fermi level · ${mix} · ${Math.round(100 * orb.weightUp)}% spin up</span></div></div>
+      ${nilssonSVG(diag, fill, delta, delta0, lv.id)}
+      <p class="chart-note">Each line is one orbital holding two ${who}s (Ω and −Ω). Color: Ω. Solid: positive parity; dashed: negative. Dots: filled at the current δ (gold: the unpaired nucleon). Dashed gold: the Fermi level with pairing. Numbers at δ = 0: magic numbers. Click a line to see that orbital; drag δ to deform.</p>
+      ${predict}
+      <p class="explain">Each nucleon moves in the average pull of all the others: roughly a <b>harmonic-oscillator well</b> with a strong <b>spin–orbit</b> force. In a round nucleus the orbitals group into shells (1s1/2, 1p3/2, 1p1/2, …). Spin–orbit pulls the highest-j orbital of each shell down into the one below (1f7/2, 1g9/2, 1h11/2, 1i13/2: the “intruders”, with the opposite parity), and that's what makes the magic numbers 28, 50, 82 and 126 instead of the oscillator's 40, 70, 112.</p>
+      <p class="explain">Deforming the nucleus splits each level of spin j into j + ½ orbitals, labeled by <b>Ω</b>, the spin's projection on the symmetry axis. In a <b>prolate</b> (cigar) nucleus, low-Ω orbitals run along the long axis, stay deeper in the well and drop in energy; high-Ω orbitals circle the waist and rise. Oblate is the reverse. Where the dropping and rising lines leave a gap at the Fermi level, the nucleus gains energy by deforming. That's how mid-shell nuclei like ¹⁶⁶Er and ²³⁸U end up cigar-shaped.</p>
+      <p class="explain">The 3D view shows where one nucleon in the chosen orbital is likely to be. The two colors are its spin-up and spin-down parts, which orbit the axis with Λ = Ω ∓ ½ units of orbital angular momentum. The faint shell is the nucleus's surface.</p>
+      <p class="note">Nilsson model: stretched oscillator with Bengtsson–Ragnarsson κ, μ, diagonalized within each oscillator shell (no ΔN = 2 mixing), without pairing or residual interactions. Level orders are realistic, and energies are good to a few hundred keV near the Fermi level.</p>`;
+  }
+
   function renderNucleon() {
       const kind = view;
       const info = NUCLEONS[kind];
@@ -578,7 +731,8 @@ export function createNucleusUI({ onElementChange } = {}) {
     view = b.dataset.value;
     document.querySelectorAll('#nuc-view button').forEach((x) => x.classList.toggle('on', x === b));
     showChart(view === 'chart');
-    if (view !== 'chart') viewer.setView(view === 'nucleus' ? 'nucleus' : 'nucleon', view);
+    if (view !== 'chart') viewer.setView(view === 'nucleus' ? 'nucleus' : view === 'shell' ? 'orbital' : 'nucleon', view);
+    if (view === 'shell') shellKey = ''; // refit to the orbital
     render();
   });
   $('#nuc-style').addEventListener('click', (e) => {
@@ -623,6 +777,26 @@ export function createNucleusUI({ onElementChange } = {}) {
     if (!b) return;
     document.querySelectorAll('#nuc-flow button').forEach((x) => x.classList.toggle('on', x === b));
     viewer.setFlow(b.dataset.value);
+  });
+  $('#nuc-shell-kind').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    shellPref = b.dataset.value;
+    shellPick = null;
+    render();
+  });
+  let deltaFrame = 0;
+  $('#nuc-delta').addEventListener('input', (e) => {
+    shellDelta = +e.target.value;
+    cancelAnimationFrame(deltaFrame);
+    deltaFrame = requestAnimationFrame(render);
+  });
+  $('#nuc-delta-reset').addEventListener('click', (e) => { e.preventDefault(); shellDelta = null; render(); });
+  $('#nuc-info').addEventListener('click', (e) => {
+    const g = e.target.closest('[data-line]');
+    if (!g) return;
+    shellPick = g.dataset.line;
+    render();
   });
   $('#nuc-fit').addEventListener('click', () => (view === 'chart' ? chart?.fit() : viewer.fit()));
   $('#nuc-chart-color').addEventListener('click', (e) => {
