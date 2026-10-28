@@ -388,6 +388,17 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .shape-chart .axis-zero { stroke: var(--line); stroke-width: 1; }
 .shape-chart .min { fill: #ffd75e; }
 .shape-chart .lbl { fill: var(--muted); font-size: 10px; }
+.mo-layout { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 16px; margin-top: 10px; }
+.mo-layout h3 { margin: 0 0 4px; font-size: 13px; }
+.mo-facts { list-style: none; margin: 0 0 12px; padding: 0; font-size: 13px; }
+.mo-facts li { padding: 2px 0; }
+.mo-diagram { width: 100%; height: auto; }
+.mo-diagram .mo-level { cursor: pointer; }
+.mo-diagram .mo-level:hover line { stroke-width: 3.5; }
+.mo-diagram .mo-e { fill: var(--text); font-size: 11px; }
+.mo-diagram .mo-lbl { fill: var(--muted); font-size: 10.5px; }
+.mo-diagram .mo-corr { stroke: #6d7a94; stroke-width: 1; stroke-dasharray: 3 3; }
+@media (max-width: 640px) { .mo-layout { grid-template-columns: 1fr; } }
 .chart-note { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
 .stage-empty {
   position: absolute;

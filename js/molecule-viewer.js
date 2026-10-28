@@ -131,7 +131,7 @@ export class MoleculeViewer {
     this.controls.autoRotateSpeed = 1.0;
 
     this.groups = {};
-    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges', 'hbonds']) {
+    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges', 'hbonds', 'mo']) {
       this.groups[name] = new THREE.Group();
       this.scene.add(this.groups[name]);
     }
@@ -189,6 +189,7 @@ export class MoleculeViewer {
     this.selected = null;
     for (const [name, g] of Object.entries(this.groups)) {
       if (name === 'density' && this.mc) { g.remove(this.mc); }
+      if (name === 'mo') this.moKey = null;
       this.#clear(g);
     }
     if (!mol) return;
@@ -552,6 +553,33 @@ export class MoleculeViewer {
     this.densityBuilt = true;
   }
 
+  /**
+   * Show one molecular orbital: field sampled on a res³ grid over [−half, half) Å,
+   * drawn as its +iso surface (one phase color) and −iso surface (the other).
+   */
+  setMO(field, res, half, iso, key) {
+    const g = this.groups.mo;
+    this.#clear(g);
+    this.moKey = key;
+    this.moMC ??= new MarchingCubes(res, new THREE.MeshBasicMaterial(), false, false, 120000);
+    const mc = this.moMC;
+    for (const [sign, color] of [[1, PHASE_COLORS.pos], [-1, PHASE_COLORS.neg]]) {
+      mc.reset();
+      for (let i = 0; i < field.length; i++) mc.field[i] = sign * field[i];
+      mc.isolation = iso;
+      mc.update();
+      if (!mc.count) continue;
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(mc.positionArray.slice(0, mc.count * 3), 3));
+      geom.setAttribute('normal', new THREE.BufferAttribute(mc.normalArray.slice(0, mc.count * 3), 3));
+      const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
+        color, transparent: true, opacity: 0.72, roughness: 0.35, side: THREE.DoubleSide, depthWrite: false,
+      }));
+      mesh.scale.setScalar(half);
+      g.add(mesh);
+    }
+  }
+
   setIso(value) {
     this.iso = value;
     if (this.mc && this.densityBuilt) {
@@ -583,6 +611,7 @@ export class MoleculeViewer {
     G.lonePairs.visible = v === 'structure' && this.options.lonePairs;
     G.orbitals.visible = v === 'orbitals';
     G.density.visible = v === 'density';
+    G.mo.visible = v === 'mo';
     G.angles.visible = this.options.angles;
     G.hbonds.visible = this.options.hbonds;
     for (const o of G.hbonds.children) if (o.userData.isLengthLabel) o.visible = this.options.lengths;

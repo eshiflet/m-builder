@@ -25,9 +25,20 @@ Switch to **Molecules** at the top, then click elements to add atoms (or pick an
   the reference list.
 - **Structure view:** a ball-and-stick model. Bond angles are drawn as arcs with
   labels, and lone pairs (purple) show why H₂O is bent while CO₂ is straight.
-- **Orbitals view:** hybrid orbitals (σ) point along the bonds and overlap
+- **Hybrid orbitals view** (valence-bond picture): hybrid orbitals (σ) point along the bonds and overlap
   head-on. p orbitals (orange/blue by phase) overlap side by side to form π
   bonds. Lone pairs are shown in lavender.
+- **Molecular orbitals view:** MOs spread over the whole molecule, computed
+  with Extended Hückel theory (`js/eht.js`). The basis is valence Slater
+  orbitals, each fit by three Gaussians (STO-3G), so overlaps S are exact; Hᵢᵢ
+  are measured valence ionization energies, and Hᵢⱼ = 1.75·Sᵢⱼ(Hᵢᵢ + Hⱼⱼ)/2. The
+  view shows an energy-level diagram (with atomic levels and correlation lines
+  for diatomics), bonding/antibonding/nonbonding and σ/π labels, the HOMO/LUMO
+  gap, and each MO as a 3D surface colored by sign. Same-element diatomics get
+  textbook bond orders from inversion symmetry: H₂ 1, B₂ 1, C₂ 2, N₂ 3, O₂ 2,
+  F₂ 1. O₂ and B₂ come out paramagnetic with two unpaired electrons, which a
+  Lewis structure can't explain. Covers H through Cl. Use ↑/↓ to step through
+  orbitals.
 - **Electron density view:** a surface of constant total electron density
   (the sum of the atoms' own clouds). The slider shows the clouds merging into
   one envelope at low density and separating into atoms at high density.
@@ -209,6 +220,7 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - `js/smiles.js`: SMILES parser (rings, branches, charges, implicit H, stereo)
 - `js/forcefield.js`: force field (including H-bonds), FIRE minimizer, conformer search, and docking
 - `js/conformer-worker.js`: runs the conformer search off the main thread
+- `js/eht.js`: Extended Hückel molecular orbitals (STO-3G overlaps, Jacobi eigensolver)
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI
 - `js/nucleus-data.js`: isotopes, radii and neutron skins, halos, mass formula, and collective mode energies

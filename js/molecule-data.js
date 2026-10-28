@@ -139,6 +139,10 @@ export const KNOWN_MOLECULES = [
     ],
     bonds: [[0, 1, 2], [0, 2, 1], [0, 3, 1], [1, 4, 1], [1, 5, 1]],
   },
+  // Diatomics seen in the gas phase, the classic molecular-orbital examples.
+  { formula: 'Li2', name: 'Dilithium', shape: 'Linear', coords: [['Li', -1.3365, 0, 0], ['Li', 1.3365, 0, 0]], bonds: [[0, 1, 1]] },
+  { formula: 'B2', name: 'Diboron', shape: 'Linear', coords: [['B', -0.795, 0, 0], ['B', 0.795, 0, 0]], bonds: [[0, 1, 1]] },
+  { formula: 'C2', name: 'Dicarbon', shape: 'Linear', coords: [['C', -0.6215, 0, 0], ['C', 0.6215, 0, 0]], bonds: [[0, 1, 2]] },
   {
     formula: 'C2H2', name: 'Acetylene', shape: 'Linear',
     coords: [['H', -1.6645, 0, 0], ['C', -0.6015, 0, 0], ['C', 0.6015, 0, 0], ['H', 1.6645, 0, 0]],

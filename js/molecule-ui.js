@@ -6,6 +6,7 @@ import {
 } from './molecule.js';
 import { KNOWN_MOLECULES } from './molecule-data.js';
 import { configHTML } from './electron-config.js';
+import { computeMOs, moField } from './eht.js';
 import { MoleculeViewer, atomColor, SIGMA_COLOR, H1S_COLOR, TRANSFER_COLOR, HBOND_COLOR } from './molecule-viewer.js';
 import { PHASE_COLORS } from './viewer.js';
 
@@ -21,7 +22,8 @@ const isoFromSlider = (v) => 10 ** (-3 + (3 * v) / 100);
 
 const VIEW_TEXT = {
   structure: 'Ball-and-stick model with bond angles. Purple lobes are lone pairs: they repel more strongly than bonding pairs, which is what bends molecules like H₂O while CO₂ stays straight.',
-  orbitals: 'Each atom’s hybrid orbitals point along its bonds; where lobes from two atoms overlap head-on they form a σ bond. Orange/blue lobes are p orbitals that overlap side by side (orange with orange) to form π bonds. Lavender lobes are lone pairs.',
+  mo: 'Molecular orbitals spread over the whole molecule, computed here with Extended Hückel theory (valence Slater orbitals, measured ionization energies, H<sub>ij</sub> = 1.75·S<sub>ij</sub>·(H<sub>ii</sub>+H<sub>jj</sub>)/2). Orange and blue are the two signs of the wavefunction. Where the same color joins up between two atoms, electrons there pull the atoms together (bonding); a change of sign between them, a node, pushes them apart (antibonding). Electrons fill the levels from the bottom, two per orbital with opposite spins, and one per orbital across a set of equal-energy orbitals before pairing (Hund’s rule). EHT is qualitative: shapes, orderings and bonding character are reliable, exact energies are not. Use ↑/↓ to step through the orbitals.',
+  orbitals: 'Valence-bond picture. Each atom’s hybrid orbitals point along its bonds; where lobes from two atoms overlap head-on they form a σ bond. Orange/blue lobes are p orbitals that overlap side by side (orange with orange) to form π bonds. Lavender lobes are lone pairs.',
   ionicOrbitals: 'Ionic bonding shares no orbitals. The metal hands its valence electrons to the nonmetal (arrows), leaving each ion with a filled, spherical shell like a noble gas. The ions then stick together by electrostatic attraction.',
   ionicDensity: 'Each ion keeps its own nearly spherical cloud, built from the ion’s own electron configuration. Even at low density the clouds barely merge, unlike a covalent molecule such as H₂O, where they fuse into one envelope.',
   density: 'A surface of constant total electron density. Slide toward low density and the atoms’ clouds merge into one envelope around the molecule; slide toward high density and it pinches apart into separate atoms. Colors show which atom contributes most at each point. This adds up isolated-atom clouds, and real bonding pulls a little extra density into the bonds.',
@@ -36,6 +38,10 @@ export function createMoleculeUI({ onTrayChange }) {
   let customSmiles = null; // a typed SMILES that isn't in the library
   let view = 'structure';
   let mol = null;
+  const moCache = new WeakMap();
+  let moIndex = null; // which molecular orbital is shown (default: the HOMO)
+  const moIsoFromSlider = (v) => 0.005 * 40 ** (v / 100); // 0.005–0.2 bohr^−3/2
+  const MO_RES = 64;
 
   $('#examples').innerHTML = EXAMPLES
     .map(({ formula, charge: q = 0, name, label }) => (name
@@ -122,8 +128,169 @@ export function createMoleculeUI({ onTrayChange }) {
     }
     empty.innerHTML = '';
     viewer.setMolecule(mol);
+    moIndex = null;
+    if (view === 'mo') showMO();
     renderTitle();
     renderInfo();
+  }
+
+  // ---------- molecular orbitals ----------
+
+  function moData() {
+    if (!mol || mol.error) return null;
+    if (!moCache.has(mol)) moCache.set(mol, computeMOs(mol));
+    return moCache.get(mol);
+  }
+
+  function showMO() {
+    const r = moData();
+    if (!r || r.error) { viewer.setMO(new Float32Array(MO_RES ** 3), MO_RES, 1, 1, null); return; }
+    moIndex ??= Math.max(0, r.homo);
+    const half = Math.max(...mol.atoms.map((a) => Math.max(...a.pos.map(Math.abs)))) + 3.2;
+    viewer.setMO(moField(r, moIndex, MO_RES, half), MO_RES, half, moIsoFromSlider(+$('#mo-iso').value), moIndex);
+  }
+
+  /** Share of an MO on each atom's s and p shells (c², normalized). */
+  function composition(r, k) {
+    const c = r.mos[k].c;
+    const parts = new Map();
+    let total = 0;
+    r.basis.forEach((f, i) => {
+      const key = `${mol.atoms[f.atom].symbol}${f.atom + 1} ${f.n}${'sp'[f.l]}`;
+      parts.set(key, (parts.get(key) ?? 0) + c[i] * c[i]);
+      total += c[i] * c[i];
+    });
+    return [...parts].map(([k2, w]) => [k2, w / total]).sort((a, b) => b[1] - a[1]);
+  }
+
+  /** Energy-level diagram as inline SVG; diatomics get atomic levels and correlation lines. */
+  function moDiagram(r) {
+    const n = r.mos.length;
+    const lo = n <= 24 ? 0 : Math.max(0, r.homo - 11), hi = n <= 24 ? n - 1 : Math.min(n - 1, r.homo + 8);
+    const shown = [];
+    for (let k = lo; k <= hi; k++) shown.push(k);
+    const diatomic = mol.atoms.length === 2;
+    const aoE = diatomic ? r.aoLevels.flatMap((a) => a.shells.map((s) => s.energy)) : [];
+    const energies = [...shown.map((k) => r.mos[k].energy), ...aoE];
+    const eMin = Math.min(...energies) - 1.5, eMax = Math.max(...energies) + 1.5;
+    const W = 330;
+    let H = Math.min(520, Math.max(260, shown.length * 22));
+    const Y = (e) => 14 + ((eMax - e) / (eMax - eMin)) * (H - 34);
+    const kindColor = { bonding: '#7ee2a8', antibonding: '#ff8a80', nonbonding: '#c9d3e6' };
+    const mid = diatomic ? [125, 205] : [70, 230];
+    const out = [];
+    // Group equal energies so degenerate orbitals sit side by side.
+    const groups = [];
+    for (const k of shown) {
+      const g = groups[groups.length - 1];
+      if (g && Math.abs(r.mos[g[0]].energy - r.mos[k].energy) < 0.01) g.push(k); else groups.push([k]);
+    }
+    // Keep nearly equal levels at least 16 px apart (order preserved), growing the chart if needed.
+    const groupY = new Map();
+    let prevY = -Infinity;
+    for (const g of [...groups].sort((a, b) => r.mos[b[0]].energy - r.mos[a[0]].energy)) {
+      const y = Math.max(Y(r.mos[g[0]].energy), prevY + 16);
+      groupY.set(g, y);
+      prevY = y;
+    }
+    H = Math.max(H, prevY + 24);
+    const levelX = new Map();
+    let lastLabelY = -99;
+    for (const g of groups) {
+      const span = (mid[1] - mid[0]) / g.length;
+      g.forEach((k, j) => {
+        const m = r.mos[k];
+        const x0 = mid[0] + j * span + 4, x1 = mid[0] + (j + 1) * span - 4;
+        const y = groupY.get(g);
+        levelX.set(k, [x0, x1, y]);
+        const sel = k === moIndex;
+        const arrows = m.occ === 2 ? '↑↓' : m.occ === 1 ? '↑' : '';
+        out.push(`<g class="mo-level${sel ? ' sel' : ''}" data-mo="${k}">
+          <rect x="${x0 - 2}" y="${y - 11}" width="${x1 - x0 + 4}" height="16" fill="transparent"/>
+          <line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" stroke="${sel ? 'var(--accent)' : kindColor[m.kind]}" stroke-width="${sel ? 3.5 : 2.2}"/>
+          ${arrows ? `<text x="${(x0 + x1) / 2}" y="${y - 3}" text-anchor="middle" class="mo-e">${arrows}</text>` : ''}
+        </g>`);
+      });
+      const y = groupY.get(g);
+      const isKey = g.some((k) => k === r.homo || k === r.lumo || k === moIndex);
+      if (isKey || Math.abs(y - lastLabelY) > 13) {
+        const m = r.mos[g[0]];
+        const tag = g.includes(r.homo) ? ' HOMO' : g.includes(r.lumo) ? ' LUMO' : '';
+        out.push(`<text x="${mid[1] + 6}" y="${y + 4}" class="mo-lbl">${m.label}${tag}</text>`);
+        lastLabelY = y;
+      }
+    }
+    if (diatomic) {
+      // Atomic levels on each side, with dashed lines to the MOs they make up.
+      r.aoLevels.forEach((a, side) => {
+        const [x0, x1] = side === 0 ? [18, 78] : [252, 312];
+        a.shells.forEach((sh) => {
+          const y = Y(sh.energy);
+          out.push(`<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" stroke="#9aa6bd" stroke-width="2"/><text x="${side === 0 ? x0 : x1}" y="${y + 14}" text-anchor="${side === 0 ? 'start' : 'end'}" class="mo-lbl">${a.symbol} ${sh.name}</text>`);
+          for (const k of shown) {
+            const comp = composition(r, k).find(([key]) => key === `${a.symbol}${side + 1} ${sh.name}`);
+            if (!comp || comp[1] < 0.12) continue;
+            const [mx0, mx1, my] = levelX.get(k);
+            out.push(side === 0
+              ? `<line x1="${x1}" y1="${y}" x2="${mx0}" y2="${my}" class="mo-corr"/>`
+              : `<line x1="${x0}" y1="${y}" x2="${mx1}" y2="${my}" class="mo-corr"/>`);
+          }
+        });
+      });
+    }
+    return `<svg class="mo-diagram" viewBox="0 0 ${W} ${H}" role="img" aria-label="Molecular orbital energy levels">
+      <text x="4" y="12" class="mo-lbl">energy ↑ (eV)</text>${out.join('')}</svg>`;
+  }
+
+  function renderMOInfo() {
+    const r = moData();
+    const head = `<div class="info-head"><div><h2>${mol.name ?? unnamed()} <span class="muted">· ${formulaHTML(mol.formula, mol.charge)}</span></h2>
+      <div class="muted">Molecular orbitals · Extended Hückel</div></div></div>`;
+    if (r.error) {
+      $('#mol-info').innerHTML = `${head}<p class="explain">${r.error}</p>`;
+      return;
+    }
+    const m = r.mos[moIndex];
+    const comp = composition(r, moIndex).filter(([, w]) => w >= 0.05).slice(0, 5)
+      .map(([k, w]) => `${k} ${Math.round(100 * w)}%`).join(', ');
+    const homo = r.mos[r.homo], lumo = r.lumo != null ? r.mos[r.lumo] : null;
+    const kindText = {
+      bonding: 'bonding: the wavefunction keeps the same sign between the atoms, so electrons here hold them together',
+      antibonding: 'antibonding: the sign flips between the atoms (a node), so electrons here push them apart',
+      nonbonding: 'nonbonding: mostly on one atom or pointing away from the bonds, like a lone pair',
+    }[m.kind];
+    const which = moIndex === r.homo ? ' (HOMO, highest occupied)' : moIndex === r.lumo ? ' (LUMO, lowest empty)' : '';
+    const bo = r.bondOrder != null
+      ? (() => {
+        const be = r.mos.reduce((t, x) => t + (x.kind === 'bonding' ? x.occ : 0), 0);
+        const ae = r.mos.reduce((t, x) => t + (x.kind === 'antibonding' ? x.occ : 0), 0);
+        return `<li>Bond order = (bonding − antibonding electrons)/2 = (${be} − ${ae})/2 = <b>${r.bondOrder}</b></li>`;
+      })() : '';
+    const magnet = r.unpaired
+      ? `<li><b>Paramagnetic:</b> ${r.unpaired} unpaired electron${r.unpaired > 1 ? 's' : ''}${mol.formula === 'O2' ? '. That’s why liquid oxygen sticks between the poles of a magnet, something a Lewis structure (all electrons paired) can’t explain.' : ', so it’s attracted to a magnet.'}</li>`
+      : '<li>Diamagnetic: every electron is paired.</li>';
+    $('#mol-info').innerHTML = `${head}
+      <div class="mo-layout">
+        <div>${moDiagram(r)}
+          <p class="chart-note"><span style="color:#7ee2a8">■</span> bonding <span style="color:#ff8a80">■</span> antibonding <span style="color:#c9d3e6">■</span> nonbonding · click a level to show it</p></div>
+        <div>
+          <h3>Showing: ${m.label} <span class="muted">· MO ${moIndex + 1} of ${r.mos.length}${which}</span></h3>
+          <ul class="mo-facts">
+            <li>Energy ${m.energy.toFixed(2)} eV · ${m.occ ? `${m.occ} electron${m.occ > 1 ? 's' : ''}` : 'empty'}</li>
+            <li>${kindText[0].toUpperCase() + kindText.slice(1)}.</li>
+            <li class="muted">Made of: ${comp}</li>
+          </ul>
+          <h3>Whole molecule</h3>
+          <ul class="mo-facts">
+            <li>${r.electrons} valence electrons in ${r.mos.length} orbitals</li>
+            <li>HOMO ${homo.label} ${homo.energy.toFixed(2)} eV${lumo ? ` · LUMO ${lumo.label} ${lumo.energy.toFixed(2)} eV · gap ${(lumo.energy - homo.energy).toFixed(2)} eV` : ''}</li>
+            ${bo}
+            ${magnet}
+          </ul>
+        </div>
+      </div>
+      <p class="note">${VIEW_TEXT.mo}</p>`;
+    renderLegend();
   }
 
   function renderVariants() {
@@ -164,6 +331,10 @@ export function createMoleculeUI({ onTrayChange }) {
   }
 
   function renderLegendBase() {
+    if (view === 'mo') {
+      $('#mol-legend').innerHTML = `<span><i style="background:${PHASE_COLORS.pos}"></i>ψ &gt; 0</span><span><i style="background:${PHASE_COLORS.neg}"></i>ψ &lt; 0</span>`;
+      return;
+    }
     $('#mol-legend').innerHTML = view === 'orbitals' && mol?.ionic
       ? `<span><i style="background:${TRANSFER_COLOR}"></i>electron transfer</span>
          <span><i style="background:${atomColor(mol.anion.symbol)}"></i>filled anion shell</span>`
@@ -229,6 +400,7 @@ export function createMoleculeUI({ onTrayChange }) {
   }
 
   function renderInfo() {
+    if (view === 'mo') return renderMOInfo();
     const { atoms, bonds } = mol;
     const allAngles = viewer.showsAllAngles;
     const angles = allAngles ? mol.angles : mol.angles.filter((a) => a.vertex === viewer.selected);
@@ -367,12 +539,35 @@ export function createMoleculeUI({ onTrayChange }) {
     view = btn.dataset.value;
     document.querySelectorAll('#mol-view button').forEach((b) => b.classList.toggle('on', b === btn));
     $('#iso-wrap').hidden = view !== 'density';
+    $('#mo-iso-wrap').hidden = view !== 'mo';
     $('#opt-lp-wrap').hidden = view !== 'structure';
     // Angle overlays clutter the orbital and density views; start those without them.
     $('#opt-angles').checked = view === 'structure';
     viewer.setOption('angles', view === 'structure');
     viewer.setView(view);
+    if (view === 'mo') showMO();
     if (mol && !mol.error) renderInfo();
+  });
+
+  $('#mol-info').addEventListener('click', (e) => {
+    const level = e.target.closest('[data-mo]');
+    if (!level) return;
+    moIndex = +level.dataset.mo;
+    showMO();
+    renderInfo();
+  });
+  const moIso = $('#mo-iso');
+  const showMoIso = () => { $('#mo-iso-value').textContent = moIsoFromSlider(+moIso.value).toFixed(3); };
+  moIso.addEventListener('input', () => { showMoIso(); if (view === 'mo') showMO(); });
+  showMoIso();
+  document.addEventListener('keydown', (e) => {
+    if (view !== 'mo' || $('#mol-panel').hidden || e.target.matches('input, textarea')) return;
+    const r = moData();
+    if (!r || r.error || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    moIndex = Math.max(0, Math.min(r.mos.length - 1, moIndex + (e.key === 'ArrowUp' ? 1 : -1)));
+    showMO();
+    renderInfo();
+    e.preventDefault();
   });
   for (const name of ['angles', 'lengths', 'lonePairs', 'hbonds']) {
     $(`#opt-${name}`).addEventListener('change', (e) => {

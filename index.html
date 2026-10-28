@@ -200,7 +200,8 @@
           <span class="control-label">View</span>
           <div class="segmented" id="mol-view">
             <button data-value="structure" class="on">Structure</button>
-            <button data-value="orbitals">Orbitals</button>
+            <button data-value="orbitals" title="Valence-bond picture: hybrid orbitals on each atom">Hybrid orbitals</button>
+            <button data-value="mo" title="Molecular orbitals spread over the whole molecule (Extended Hückel)">Molecular orbitals</button>
             <button data-value="density">Electron density</button>
           </div>
         </div>
@@ -209,6 +210,11 @@
         <label class="toggle" id="opt-lp-wrap"><input id="opt-lonePairs" type="checkbox" checked> Lone pairs</label>
         <label class="toggle"><input id="opt-hbonds" type="checkbox" checked> H-bonds</label>
         <label class="toggle"><input id="mol-rotate" type="checkbox" checked> Rotate</label>
+        <label class="control" id="mo-iso-wrap" hidden title="Which value of the wavefunction the surface is drawn at">
+          <span class="control-label">Surface</span>
+          <input id="mo-iso" type="range" min="0" max="100" step="1" value="62">
+          <span id="mo-iso-value" class="iso-value"></span>
+        </label>
         <label class="control" id="iso-wrap" hidden>
           <span class="control-label">Density</span>
           <input id="iso" type="range" min="0" max="100" step="1" value="66">
