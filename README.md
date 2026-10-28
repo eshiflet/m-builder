@@ -32,7 +32,20 @@ Switch to **Molecules** at the top, then click elements to add atoms (or pick an
   (the sum of the atoms' own clouds). The slider shows the clouds merging into
   one envelope at low density and separating into atoms at high density.
 
-Link to a molecule with `#mol=H2O`.
+**Ionic compounds.** A group 1–2 metal combined with a nonmetal (NaCl, MgCl₂,
+CaO) is built as ions held together by charge, not as shared-pair bonds. The
+ions are drawn at their ionic sizes with their charges. The Orbitals view shows
+the electrons moving from metal to nonmetal, and the density view uses each
+ion's own electron configuration. Charges must balance (NaCl₂ is refused with
+the formula that does balance). Gas-phase bond lengths are measured where known
+and otherwise estimated from ionic radii. The solid is a crystal lattice; the
+view shows a single unit.
+
+**Charged ions.** Use the **Charge** control for polyatomic ions such as NH₄⁺,
+NO₃⁻, CO₃²⁻ and SO₄²⁻. If a formula only works as an ion (for example C + 3 O),
+the panel offers the charge that does.
+
+Link to a molecule with `#mol=H2O`, or to an ion with `#mol=CO3&q=-2`.
 
 ## What you're looking at
 

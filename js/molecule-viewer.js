@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MarchingCubes } from 'three/addons/objects/MarchingCubes.js';
-import { ATOM_COLORS, COVALENT_RADIUS } from './molecule-data.js';
+import { ATOM_COLORS, COVALENT_RADIUS, IONIC_RADIUS } from './molecule-data.js';
 import { ELEMENTS, CATEGORIES } from './elements.js';
 import { electronConfig, slaterZeff } from './electron-config.js';
 import { atomDensityTable } from './orbitals.js';
 import { PHASE_COLORS } from './viewer.js';
+import { chargeText } from './molecule.js';
 
 const BOHR = 0.529177; // Å
 const DENSITY_RES = 64;
@@ -23,7 +24,12 @@ export function atomColor(symbol) {
   return CATEGORIES[el.category].color;
 }
 
-const ballRadius = (symbol) => 0.2 + 0.18 * (COVALENT_RADIUS[symbol] ?? 1.4);
+export const TRANSFER_COLOR = '#ffb347';
+
+// Ions are drawn at their ionic size (small cations, large anions); atoms at covalent size.
+const ballRadius = (a) => (a.charge
+  ? 0.45 * (IONIC_RADIUS[a.symbol] ?? 1.4)
+  : 0.2 + 0.18 * (COVALENT_RADIUS[a.symbol] ?? 1.4));
 
 function textSprite(text, { color = '#ffffff', height = 0.22, weight = 600 } = {}) {
   const canvas = document.createElement('canvas');
@@ -124,7 +130,7 @@ export class MoleculeViewer {
     this.controls.autoRotateSpeed = 1.0;
 
     this.groups = {};
-    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density']) {
+    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges']) {
       this.groups[name] = new THREE.Group();
       this.scene.add(this.groups[name]);
     }
@@ -173,6 +179,7 @@ export class MoleculeViewer {
     this.#buildAngles();
     this.#buildLengths();
     this.#buildLonePairs();
+    this.#buildCharges();
     this.#buildOrbitals();
     this.densityBuilt = false;
     this.#applyView();
@@ -184,7 +191,7 @@ export class MoleculeViewer {
     const g = this.groups.structure;
     for (const a of atoms) {
       const ball = new THREE.Mesh(
-        new THREE.SphereGeometry(ballRadius(a.symbol), 32, 20),
+        new THREE.SphereGeometry(ballRadius(a), 32, 20),
         new THREE.MeshStandardMaterial({ color: atomColor(a.symbol), roughness: 0.35, metalness: 0.05 }),
       );
       ball.position.copy(v3(a.pos));
@@ -193,6 +200,15 @@ export class MoleculeViewer {
     for (const bd of bonds) {
       const A = atoms[bd.a], B = atoms[bd.b];
       const p = v3(A.pos), q = v3(B.pos);
+      if (bd.ionic) { // electrostatic attraction, not a shared pair: a thin dashed line
+        const dir = q.clone().sub(p).normalize();
+        const s = p.clone().addScaledVector(dir, ballRadius(A)), e = q.clone().addScaledVector(dir, -ballRadius(B));
+        const n = Math.max(3, Math.round(s.distanceTo(e) / 0.14));
+        for (let i = 0; i < n; i++) {
+          g.add(cylinder(s.clone().lerp(e, (i + 0.25) / n), s.clone().lerp(e, (i + 0.75) / n), 0.025, '#9aa6bd'));
+        }
+        continue;
+      }
       const axis = new THREE.Vector3().subVectors(q, p).normalize();
       // Offset multiple bonds within the σ plane (perpendicular to the π orbitals).
       const pi = bd.piDirs[0] ? v3(bd.piDirs[0]) : new THREE.Vector3(0, 0, 1);
@@ -228,7 +244,7 @@ export class MoleculeViewer {
     const g = this.groups.skeleton;
     for (const a of atoms) {
       const ball = new THREE.Mesh(
-        new THREE.SphereGeometry(ballRadius(a.symbol) * 0.38, 20, 12),
+        new THREE.SphereGeometry(ballRadius(a) * (a.charge ? 0.25 : 0.38), 20, 12),
         new THREE.MeshStandardMaterial({ color: atomColor(a.symbol), roughness: 0.3 }),
       );
       ball.position.copy(v3(a.pos));
@@ -254,7 +270,7 @@ export class MoleculeViewer {
       const PA = v3(atoms[ang.a].pos), PB = v3(atoms[ang.b].pos);
       const u = PA.clone().sub(V), w = PB.clone().sub(V);
       const shortest = Math.min(u.length(), w.length());
-      const ra = Math.min(0.8 * shortest, Math.max(ballRadius(atoms[ang.vertex].symbol) + 0.25, 0.45 * shortest)) + 0.12 * nth;
+      const ra = Math.min(0.8 * shortest, Math.max(ballRadius(atoms[ang.vertex]) + 0.25, 0.45 * shortest)) + 0.12 * nth;
       u.normalize(); w.normalize();
       let k = new THREE.Vector3().crossVectors(u, w);
       if (k.lengthSq() < 1e-6) { // 180°: pick any plane containing the bond
@@ -310,7 +326,7 @@ export class MoleculeViewer {
     const g = this.groups.lonePairs;
     for (const a of this.mol.atoms) {
       const pos = v3(a.pos);
-      const r = ballRadius(a.symbol);
+      const r = ballRadius(a);
       a.lpDirs.forEach((d, i) => {
         const dir = v3(d);
         const isSingle = a.single && i === a.lpDirs.length - 1;
@@ -329,8 +345,58 @@ export class MoleculeViewer {
     }
   }
 
+  // "+", "2−" labels above each ion.
+  #buildCharges() {
+    for (const a of this.mol.atoms) {
+      if (!a.charge) continue;
+      const label = textSprite(chargeText(a.charge), { color: a.charge > 0 ? '#ffb38a' : '#8fd0ff', height: 0.3, weight: 700 });
+      label.position.copy(v3(a.pos)).add(new THREE.Vector3(0, 0, ballRadius(a) + 0.22));
+      this.groups.charges.add(label);
+    }
+  }
+
+  // Ionic bonding: each ion's (filled) valence shell, and arrows for the electrons transferred.
+  #buildIonicOrbitals() {
+    const { atoms, bonds } = this.mol;
+    const g = this.groups.orbitals;
+    for (const a of atoms) {
+      const shell = new THREE.Mesh(
+        new THREE.SphereGeometry(0.9 * (IONIC_RADIUS[a.symbol] ?? 1.4), 40, 24),
+        new THREE.MeshStandardMaterial({
+          color: atomColor(a.symbol), transparent: true, opacity: a.charge < 0 ? 0.42 : 0.2,
+          depthWrite: false, roughness: 0.5,
+        }),
+      );
+      shell.position.copy(v3(a.pos));
+      g.add(shell);
+    }
+    const mat = new THREE.MeshStandardMaterial({ color: TRANSFER_COLOR, emissive: TRANSFER_COLOR, emissiveIntensity: 0.35 });
+    for (const bd of bonds) {
+      const [ci, ai] = atoms[bd.a].charge > 0 ? [bd.a, bd.b] : [bd.b, bd.a];
+      const C = v3(atoms[ci].pos), A = v3(atoms[ai].pos);
+      const axis = A.clone().sub(C);
+      const up = new THREE.Vector3(0, 0, 1).cross(axis).cross(axis).normalize().negate();
+      if (up.lengthSq() < 1e-4) up.set(0, 1, 0);
+      const lift = 0.35 * axis.length() + 0.4;
+      const start = C.clone().addScaledVector(up, ballRadius(atoms[ci]) + 0.1);
+      const end = A.clone().addScaledVector(axis.clone().normalize(), -0.15).addScaledVector(up, ballRadius(atoms[ai]) * 0.9);
+      const ctrl = C.clone().lerp(A, 0.5).addScaledVector(up, lift + 0.5);
+      const curve = new THREE.QuadraticBezierCurve3(start, ctrl, end);
+      g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.03, 8), mat));
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.24, 16), mat);
+      head.position.copy(end);
+      head.quaternion.setFromUnitVectors(Y, curve.getTangent(1).normalize());
+      g.add(head);
+      const n = bd.transfer;
+      const label = textSprite(`${n} e⁻`, { color: TRANSFER_COLOR, height: 0.22, weight: 700 });
+      label.position.copy(curve.getPoint(0.5)).addScaledVector(up, 0.2);
+      g.add(label);
+    }
+  }
+
   // σ hybrid lobes toward each bond, lone-pair lobes, and p orbitals for π bonds.
   #buildOrbitals() {
+    if (this.mol.ionic) return this.#buildIonicOrbitals();
     const { atoms, bonds } = this.mol;
     const g = this.groups.orbitals;
     const pChar = { 'sp': 1, 'sp²': 2, 'sp³': 3, 'sp³d': 3, 'sp³d²': 3 };
@@ -366,7 +432,7 @@ export class MoleculeViewer {
   #buildDensity() {
     const { atoms } = this.mol;
     const tables = atoms.map((a) => {
-      const config = electronConfig(a.z);
+      const config = electronConfig(a.z - (a.charge ?? 0)); // ions: add or remove valence electrons
       return atomDensityTable(config.map((s) => ({ ...s, zeff: slaterZeff(a.z, config, s.n, s.l) })));
     });
     const colors = atoms.map((a) => new THREE.Color(atomColor(a.symbol)));
@@ -446,7 +512,7 @@ export class MoleculeViewer {
 
   fit() {
     if (!this.mol) return;
-    const r = Math.max(...this.mol.atoms.map((a) => Math.hypot(...a.pos))) + (this.view === 'structure' ? 0.7 : 0.9);
+    const r = Math.max(...this.mol.atoms.map((a) => Math.hypot(...a.pos) + ballRadius(a))) + (this.view === 'structure' ? 0.45 : 0.75);
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
     const dist = r / Math.sin(Math.min(vfov, hfov) / 2);

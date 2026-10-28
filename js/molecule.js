@@ -2,7 +2,7 @@
 // with a single central atom gets a Lewis structure and a VSEPR estimate.
 
 import { ELEMENTS } from './elements.js';
-import { COVALENT_RADIUS, ELECTRONEGATIVITY, KNOWN_MOLECULES } from './molecule-data.js';
+import { COVALENT_RADIUS, ELECTRONEGATIVITY, IONIC_RADIUS, KNOWN_MOLECULES } from './molecule-data.js';
 
 const BY_SYMBOL = new Map(ELEMENTS.map((e) => [e.symbol, e]));
 const DEG = Math.PI / 180;
@@ -47,7 +47,11 @@ export function hillKey(counts) {
   return order.map((s) => s + (counts.get(s) > 1 ? counts.get(s) : '')).join('');
 }
 
-export const formulaHTML = (str) => str.replace(/(\d+)/g, '<sub>$1</sub>');
+/** "2−", "+", or "" for a charge. */
+export const chargeText = (q) => (q ? `${Math.abs(q) > 1 ? Math.abs(q) : ''}${q > 0 ? '+' : '−'}` : '');
+
+export const formulaHTML = (str, charge = 0) =>
+  str.replace(/(\d+)/g, '<sub>$1</sub>') + (charge ? `<sup>${chargeText(charge)}</sup>` : '');
 
 export function valenceElectrons(symbol) {
   const el = BY_SYMBOL.get(symbol);
@@ -150,7 +154,7 @@ function vseprDirections(nL, E, angle, angle2) {
   throw new BuildError('That many electron domains around one atom is beyond simple VSEPR.');
 }
 
-function fromVSEPR(counts, known) {
+function fromVSEPR(counts, known, charge = 0) {
   const symbols = [...counts].flatMap(([s, n]) => Array(n).fill(s));
   if (symbols.length < 2) throw new BuildError('Add at least two atoms to make a molecule.');
   for (const s of new Set(symbols)) {
@@ -175,7 +179,7 @@ function fromVSEPR(counts, known) {
     throw new BuildError('Too many atoms to fit around a single central atom. Molecules with several central atoms are built only for ones in the reference list (try C₂H₆, C₂H₄, C₆H₆, CH₃OH…).');
   }
 
-  const valence = symbols.reduce((sum, s) => sum + valenceElectrons(s), 0);
+  const valence = symbols.reduce((sum, s) => sum + valenceElectrons(s), 0) - charge;
   const lig = ligSyms.map((symbol) => ({ symbol, order: 1, lp: 0 }));
   let left = valence - 2 * lig.length;
   if (left < 0) throw new BuildError('There aren’t enough valence electrons to bond every atom to one center.');
@@ -245,6 +249,83 @@ function fromVSEPR(counts, known) {
     source: known ? 'experimental' : 'vsepr',
     vsepr: nL > 1 ? `AX<sub>${nL}</sub>${E ? `E${E > 1 ? `<sub>${E}</sub>` : ''}` : ''}` : null,
     shape: SHAPES[`${nL},${E}`] ?? null,
+    atoms,
+    bonds,
+  };
+}
+
+// ---------- ionic compounds ----------
+
+const isMetalCation = (s) => {
+  const el = BY_SYMBOL.get(s);
+  return el && el.row <= 7 && (el.col === 1 || el.col === 2) && s !== 'H' && s !== 'Be';
+};
+
+/** Charge a nonmetal takes as a simple anion (Cl⁻, O²⁻, N³⁻, H⁻), or null. */
+function anionCharge(s) {
+  if (s === 'H') return -1;
+  const el = BY_SYMBOL.get(s);
+  if (!el || el.row > 7) return null;
+  if (el.col === 17) return -1;
+  if (el.col === 16 && s !== 'Po') return -2;
+  if (s === 'N' || s === 'P') return -3;
+  return null;
+}
+
+const ionLabel = (s, q) => `${s}<sup>${chargeText(q)}</sup>`;
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+
+/** A metal from groups 1–2 combined with nonmetals: bonded by charge, not shared pairs. */
+export function isIonicCombo(counts) {
+  const syms = [...counts.keys()].filter((s) => counts.get(s) > 0);
+  return syms.some(isMetalCation) && syms.some((s) => !isMetalCation(s));
+}
+
+function fromIonic(counts, known) {
+  const syms = [...counts.keys()].filter((s) => counts.get(s) > 0);
+  const metals = syms.filter(isMetalCation);
+  if (syms.length !== 2 || metals.length !== 1) {
+    throw new BuildError('Salts with more than two elements contain polyatomic ions (like OH⁻ or CO₃²⁻). Build the polyatomic ion on its own and set its charge.');
+  }
+  const cat = metals[0];
+  const an = syms.find((s) => s !== cat);
+  const qc = BY_SYMBOL.get(cat).col;
+  const qa = anionCharge(an);
+  if (qa == null) {
+    throw new BuildError(`${BY_SYMBOL.get(an).name} doesn’t form a simple anion, so it won’t make an ionic compound with ${BY_SYMBOL.get(cat).name.toLowerCase()}.`);
+  }
+  const nc = counts.get(cat), na = counts.get(an);
+  if (nc * qc + na * qa !== 0) {
+    const l = (qc * -qa) / gcd(qc, -qa);
+    const fc = l / qc, fa = l / -qa;
+    const balanced = `${cat}${fc > 1 ? fc : ''}${an}${fa > 1 ? fa : ''}`;
+    throw new BuildError(`${BY_SYMBOL.get(cat).name} forms ${ionLabel(cat, qc)} and ${BY_SYMBOL.get(an).name.toLowerCase()} forms ${ionLabel(an, qa)}. Their charges only balance as ${formulaHTML(balanced)}.`);
+  }
+  let center, ligand, nL;
+  if (nc === 1) [center, ligand, nL] = [cat, an, na];
+  else if (na === 1) [center, ligand, nL] = [an, cat, nc];
+  else throw new BuildError('This compound only exists as an extended crystal lattice, with no small unit to show on its own.');
+  if (nL > 4) throw new BuildError('Too many ions to arrange around one center.');
+
+  const charge = (s) => (s === cat ? qc : qa);
+  const dirs = vseprDirections(nL, 0);
+  const atoms = [{ symbol: center, pos: [0, 0, 0], lp: 0, single: 0, lpDirs: [], charge: charge(center) }];
+  const bonds = [];
+  for (let i = 0; i < nL; i++) {
+    const length = known?.lengths?.[ligand] ?? 0.83 * ((IONIC_RADIUS[cat] ?? 1.2) + (IONIC_RADIUS[an] ?? 1.6));
+    atoms.push({ symbol: ligand, pos: scale(dirs.bonds[i], length), lp: 0, single: 0, lpDirs: [], charge: charge(ligand) });
+    // Electrons moving across this contact: the center's charge shared among its neighbors.
+    bonds.push({ a: 0, b: i + 1, order: 1, ionic: true, transfer: Math.abs(charge(center)) / nL });
+  }
+  return {
+    name: known?.name ?? null,
+    formula: known?.formula ?? `${cat}${nc > 1 ? nc : ''}${an}${na > 1 ? na : ''}`,
+    source: known ? 'experimental' : 'ionic',
+    ionic: true,
+    cation: { symbol: cat, charge: qc },
+    anion: { symbol: an, charge: qa },
+    vsepr: null,
+    shape: SHAPES[`${nL},0`],
     atoms,
     bonds,
   };
@@ -344,6 +425,7 @@ function finish(mol) {
   };
   for (const bd of bonds) {
     bd.piDirs = [];
+    if (bd.ionic) continue;
     const A = atoms[bd.a], B = atoms[bd.b];
     const axis = norm(sub(B.pos, A.pos));
     if (!Number.isInteger(bd.order)) {
@@ -373,7 +455,7 @@ function finish(mol) {
   for (const a of atoms) {
     const k = a.lp + a.single;
     a.steric = a.sigmaDirs.length + k;
-    a.hybrid = a.symbol === 'H' ? 's' : HYBRID[Math.max(a.steric, 1)];
+    a.hybrid = mol.ionic ? null : a.symbol === 'H' ? 's' : HYBRID[Math.max(a.steric, 1)];
     if (a.lpDirs) continue;
     a.lpDirs = [];
     if (!k || !a.sigmaDirs.length) continue;
@@ -424,17 +506,48 @@ function finish(mol) {
   return mol;
 }
 
-/** Build a molecule from element counts. Returns a molecule, { error }, or null if empty. */
-export function buildMolecule(counts) {
+function build(counts, charge) {
+  const key = hillKey(counts);
+  const known = KNOWN_MOLECULES.find((m) => hillKey(parseFormula(m.formula)) === key && (m.charge ?? 0) === charge);
+  let mol;
+  if (charge !== 0 && isIonicCombo(counts)) {
+    throw new BuildError('This combination forms a neutral ionic compound; the charges of its ions already cancel. Set the charge back to 0.');
+  }
+  if (known?.zmatrix || known?.coords) mol = fromExplicit(known);
+  else if (charge === 0 && isIonicCombo(counts)) mol = fromIonic(counts, known);
+  else mol = fromVSEPR(counts, known, charge);
+  mol.charge = charge;
+  mol.crystal = !!known?.crystal;
+  finish(mol);
+  mol.electrons -= charge;
+  return mol;
+}
+
+/**
+ * Build a molecule or ion from element counts and an overall charge.
+ * Returns a molecule, { error, formula, suggestCharge? }, or null if empty.
+ */
+export function buildMolecule(counts, charge = 0) {
   const total = [...counts.values()].reduce((s, n) => s + n, 0);
   if (!total) return null;
-  const key = hillKey(counts);
-  const known = KNOWN_MOLECULES.find((m) => hillKey(parseFormula(m.formula)) === key);
   try {
-    const mol = known?.zmatrix || known?.coords ? fromExplicit(known) : fromVSEPR(counts, known);
-    return finish(mol);
+    return build(counts, charge);
   } catch (e) {
-    if (e instanceof BuildError) return { error: e.message, formula: key };
-    throw e;
+    if (!(e instanceof BuildError)) throw e;
+    const result = { error: e.message, formula: hillKey(counts), charge };
+    // Many failures are ions entered without their charge (NH₄, CO₃): suggest one that works.
+    for (const q of isIonicCombo(counts) ? [] : [1, -1, -2, 2, -3, 3]) {
+      if (q === charge) continue;
+      try {
+        const mol = build(counts, q);
+        result.suggestCharge = q;
+        result.suggestFormula = mol.formula;
+        result.suggestName = mol.name;
+        break;
+      } catch (err) {
+        if (!(err instanceof BuildError)) throw err;
+      }
+    }
+    return result;
   }
 }

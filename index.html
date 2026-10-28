@@ -80,6 +80,12 @@
         <div class="builder-row">
           <span class="control-label">Molecule</span>
           <div id="tray" class="tray"></div>
+          <div id="charge" class="charge" title="Overall charge, for ions like NH₄⁺ or CO₃²⁻">
+            <span class="control-label">Charge</span>
+            <button data-step="-1" aria-label="Decrease charge">−</button>
+            <span id="charge-value">0</span>
+            <button data-step="1" aria-label="Increase charge">+</button>
+          </div>
           <button id="tray-clear" class="chip">Clear</button>
         </div>
         <div class="builder-row">

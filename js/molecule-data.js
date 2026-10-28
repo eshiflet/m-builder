@@ -10,6 +10,14 @@ export const COVALENT_RADIUS = {
   Cs: 2.32, Ba: 1.96, Tl: 1.44, Pb: 1.44, Bi: 1.51, Po: 1.45, At: 1.47, Rn: 1.42,
 };
 
+// Ionic radii in Å (Shannon, 6-coordinate) for the ions the builder forms.
+export const IONIC_RADIUS = {
+  Li: 0.76, Na: 1.02, K: 1.38, Rb: 1.52, Cs: 1.67, Fr: 1.80,
+  Mg: 0.72, Ca: 1.00, Sr: 1.18, Ba: 1.35, Ra: 1.48,
+  H: 1.40, F: 1.33, Cl: 1.81, Br: 1.96, I: 2.20, At: 2.3,
+  O: 1.40, S: 1.84, Se: 1.98, Te: 2.21, N: 1.46, P: 2.12,
+};
+
 // Pauling electronegativity.
 export const ELECTRONEGATIVITY = {
   H: 2.20, Li: 0.98, Be: 1.57, B: 2.04, C: 2.55, N: 3.04, O: 3.44, F: 3.98,
@@ -85,6 +93,34 @@ export const KNOWN_MOLECULES = [
   { formula: 'XeF2', name: 'Xenon difluoride', center: 'Xe', lengths: { F: 1.977 } },
   { formula: 'XeF4', name: 'Xenon tetrafluoride', center: 'Xe', lengths: { F: 1.95 } },
 
+  // Polyatomic ions (typical bond lengths from crystal structures).
+  { formula: 'NH4', charge: 1, name: 'Ammonium', center: 'N', lengths: { H: 1.03 }, crystal: true },
+  { formula: 'H3O', charge: 1, name: 'Hydronium', center: 'O', angle: 111.3, lengths: { H: 0.976 } },
+  { formula: 'OH', charge: -1, name: 'Hydroxide', center: 'O', lengths: { H: 0.964 } },
+  { formula: 'CN', charge: -1, name: 'Cyanide', center: 'C', lengths: { N: 1.16 }, crystal: true },
+  { formula: 'NO2', charge: -1, name: 'Nitrite', center: 'N', angle: 115.4, lengths: { O: 1.24 }, crystal: true },
+  { formula: 'NO3', charge: -1, name: 'Nitrate', center: 'N', lengths: { O: 1.25 }, crystal: true },
+  { formula: 'CO3', charge: -2, name: 'Carbonate', center: 'C', lengths: { O: 1.29 }, crystal: true },
+  { formula: 'SO4', charge: -2, name: 'Sulfate', center: 'S', lengths: { O: 1.49 }, crystal: true },
+  { formula: 'PO4', charge: -3, name: 'Phosphate', center: 'P', lengths: { O: 1.54 }, crystal: true },
+  { formula: 'ClO4', charge: -1, name: 'Perchlorate', center: 'Cl', lengths: { O: 1.44 }, crystal: true },
+
+  // Ionic compounds as single gas-phase units (bond length from the metal to each counter-ion).
+  { formula: 'NaCl', name: 'Sodium chloride', ionic: true, lengths: { Cl: 2.361 } },
+  { formula: 'NaF', name: 'Sodium fluoride', ionic: true, lengths: { F: 1.926 } },
+  { formula: 'NaBr', name: 'Sodium bromide', ionic: true, lengths: { Br: 2.502 } },
+  { formula: 'NaI', name: 'Sodium iodide', ionic: true, lengths: { I: 2.711 } },
+  { formula: 'LiF', name: 'Lithium fluoride', ionic: true, lengths: { F: 1.564 } },
+  { formula: 'LiCl', name: 'Lithium chloride', ionic: true, lengths: { Cl: 2.021 } },
+  { formula: 'KF', name: 'Potassium fluoride', ionic: true, lengths: { F: 2.171 } },
+  { formula: 'KCl', name: 'Potassium chloride', ionic: true, lengths: { Cl: 2.667 } },
+  { formula: 'KBr', name: 'Potassium bromide', ionic: true, lengths: { Br: 2.821 } },
+  { formula: 'CsCl', name: 'Cesium chloride', ionic: true, lengths: { Cl: 2.906 } },
+  { formula: 'MgO', name: 'Magnesium oxide', ionic: true, lengths: { O: 1.749 } },
+  { formula: 'CaO', name: 'Calcium oxide', ionic: true, lengths: { O: 1.822 } },
+  { formula: 'MgF2', name: 'Magnesium fluoride', ionic: true, lengths: { F: 1.77 } },
+  { formula: 'MgCl2', name: 'Magnesium chloride', ionic: true, lengths: { Cl: 2.179 } },
+
   {
     formula: 'C2H6', name: 'Ethane', shape: 'Tetrahedral carbons, staggered',
     zmatrix: [
@@ -141,4 +177,9 @@ export const KNOWN_MOLECULES = [
   },
 ];
 
-export const EXAMPLES = ['H2O', 'CO2', 'NH3', 'CH4', 'BF3', 'SO2', 'HCN', 'CH2O', 'C2H4', 'C6H6', 'PCl5', 'SF4', 'ClF3', 'SF6', 'XeF4'];
+export const EXAMPLES = [
+  ...['H2O', 'CO2', 'NH3', 'CH4', 'BF3', 'SO2', 'HCN', 'CH2O', 'C2H4', 'C6H6', 'PCl5', 'SF4', 'ClF3', 'SF6', 'XeF4']
+    .map((formula) => ({ formula, charge: 0 })),
+  { formula: 'NaCl', charge: 0 }, { formula: 'MgCl2', charge: 0 }, { formula: 'CaO', charge: 0 },
+  { formula: 'NH4', charge: 1 }, { formula: 'NO3', charge: -1 }, { formula: 'CO3', charge: -2 }, { formula: 'SO4', charge: -2 },
+];

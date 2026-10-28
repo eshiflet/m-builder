@@ -346,6 +346,14 @@ input[type="checkbox"] { accent-color: var(--accent); }
   border: 0; background: transparent; color: var(--muted); cursor: pointer;
 }
 .tray-atom button:hover { background: var(--line); color: var(--text); }
+.charge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.charge .control-label { margin-right: 2px; }
+.charge button {
+  width: 24px; height: 24px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel-2); cursor: pointer;
+}
+.charge button:hover { border-color: var(--accent); }
+#charge-value { min-width: 22px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 .examples { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
 .examples .chip { padding: 2px 9px; }
 .examples .chip.on { border-color: var(--accent); color: var(--accent); }
