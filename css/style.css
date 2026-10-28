@@ -561,3 +561,13 @@ input[type="checkbox"] { accent-color: var(--accent); }
 
 .esp-bar { display: inline-flex; align-items: center; gap: 6px; }
 .esp-bar i { display: inline-block; width: 90px; height: 9px; border-radius: 3px; background: linear-gradient(90deg, #ff3b3b, #f4f4f4, #2f7dff); }
+
+/* Powers of ten */
+.zoom-caption { max-width: 640px; }
+.zoom-slider-wrap { flex: 1; min-width: 240px; }
+.zoom-slider-wrap input { flex: 1; }
+.zoom-ladder { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 4px; }
+.zoom-ladder li { display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.zoom-ladder li:hover { background: var(--panel-2); }
+.zoom-ladder li.on { background: color-mix(in srgb, var(--accent) 18%, var(--panel-2)); }
+.zoom-ladder .ladder-size { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }

@@ -22,6 +22,7 @@
       <button data-value="atoms" class="on">Atoms</button>
       <button data-value="molecules">Molecules</button>
       <button data-value="nucleus">Nucleus</button>
+      <button data-value="zoom" title="Powers of ten: zoom from water down to a quark">Zoom</button>
     </div>
     <p class="tagline" id="tagline">Pick an element to see its electrons in 3D.</p>
   </header>
@@ -83,6 +84,37 @@
       </div>
 
       <div id="info" class="info"></div>
+    </section>
+
+    <section class="viewer-pane" aria-label="Powers of ten" id="zoom-panel" hidden>
+      <div class="stage">
+        <div id="zoom-canvas" class="canvas"></div>
+        <div id="zoom-caption" class="stage-caption zoom-caption"></div>
+        <div class="stage-top">
+          <div class="stage-title"><span><strong>Powers of ten</strong><br><span class="muted">scroll to zoom · drag to turn</span></span></div>
+        </div>
+        <div class="stage-bottom">
+          <div></div>
+          <div class="stage-status"><span id="zoom-scale" class="scale"></span></div>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="zoom-play" class="chip">▶ Zoom in</button>
+        <button id="zoom-reset" class="chip">Back to water</button>
+        <label class="control zoom-slider-wrap">
+          <span class="control-label">Scale</span>
+          <span class="muted">10⁻⁸ m</span>
+          <input id="zoom-slider" type="range" dir="rtl">
+          <span class="muted">10⁻¹⁸ m</span>
+        </label>
+        <label class="toggle"><input id="zoom-rotate" type="checkbox" checked> Rotate</label>
+      </div>
+      <div class="info">
+        <div class="info-head"><div><h2>From a drop of water to a quark</h2>
+          <div class="muted">Eleven powers of ten in one continuous zoom. Click a step to fly there.</div></div></div>
+        <ol id="zoom-ladder" class="zoom-ladder"></ol>
+        <p class="note">Everything is drawn to scale except the markers that stand in for things too small to see (the nucleus “glint”, and the quarks, which have no measured size). Sizes: water O–H bond 0.096 nm; oxygen 1s orbital ≈ 0.01 nm; oxygen-16 nucleus rms radius 2.7 fm; proton charge radius 0.84 fm.</p>
+      </div>
     </section>
 
     <section class="viewer-pane" aria-label="Nucleus viewer" id="nuc-panel" hidden>

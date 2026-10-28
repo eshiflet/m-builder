@@ -265,6 +265,19 @@ masses are only about 1% of the nucleon's mass.
 
 Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9JLGs2Yc).
 
+## Zoom (powers of ten)
+
+One continuous zoom over eleven powers of ten: liquid water (about 70 molecules
+at liquid density), one water molecule, the oxygen atom's electron cloud
+(sampled from |ψ|²), the empty space inside the atom, the oxygen-16 nucleus,
+one proton, its three quarks and gluon flux tubes, and finally a single up
+quark that never resolves, since no quark size has been measured down to
+10⁻¹⁹ m. Each layer is built in its own unit (Å or fm) and rescaled every
+frame, so the view spans 10⁻⁷·⁶ to 10⁻¹⁸·⁵ m without losing floating-point
+precision. Scroll or use the slider to zoom, press **Zoom in** to fly the whole
+way, or click a step in the ladder. Everything is to scale except the
+stand-ins for things too small to draw (the nucleus glint and the quarks).
+
 ## What you're looking at
 
 - **Configurations** follow the Madelung (aufbau) rule, with the known exceptions
@@ -317,6 +330,7 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - `js/atom-data.js`: ionization energies, electronegativities, radii, emission lines
 - `js/atom-extras.js`: radial plots, spectrum strip, hydrogen level diagram, trend colors
 - `js/polarity.js`: Gasteiger charges, lone-pair dipoles, dipole moment, electrostatic potential, measured dipoles
+- `js/zoom-viewer.js`, `js/zoom-ui.js`: powers-of-ten zoom (layers, fades, captions)
 - `js/eht.js`: Extended Hückel molecular orbitals (STO-3G overlaps, Jacobi eigensolver)
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI

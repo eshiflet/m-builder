@@ -4,6 +4,7 @@ import { ANGULAR } from './orbitals.js';
 import { AtomViewer, SUBSHELL_COLORS, PHASE_COLORS } from './viewer.js';
 import { createMoleculeUI } from './molecule-ui.js';
 import { createNucleusUI } from './nucleus-ui.js';
+import { createZoomUI } from './zoom-ui.js';
 import { radialChart, radialNote, emissionLines, spectrumStrip, hydrogenLevels, rampColor, RAMP_CSS } from './atom-extras.js';
 import { TRENDS, trendValue } from './atom-data.js';
 
@@ -14,6 +15,7 @@ const state = { z: null, subshells: [], hidden: new Set(), mode: 'atoms', weight
 const molecules = createMoleculeUI({ onTrayChange: showTrayCounts });
 // When the Nucleus view moves to another element itself (e.g. a decay's daughter), follow it in the table.
 const nucleus = createNucleusUI({ onElementChange: (z) => selectElement(z, { fromNucleus: true }) });
+const zoom = createZoomUI();
 
 // ---------- Periodic table ----------
 
@@ -327,6 +329,10 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'f' || e.key === 'F') molecules.fit();
     return;
   }
+  if (state.mode === 'zoom') {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { zoom.zoomBy(e.key === 'ArrowUp' ? 0.5 : -0.5); e.preventDefault(); }
+    return;
+  }
   if (e.key === 'ArrowRight') selectElement(state.z + 1);
   else if (e.key === 'ArrowLeft') selectElement(state.z - 1);
   else if (e.key === 'f' || e.key === 'F') (state.mode === 'nucleus' ? nucleus : viewer).fit();
@@ -349,6 +355,7 @@ const TAGLINES = {
   atoms: 'Pick an element to see its electrons in 3D.',
   molecules: 'Click elements to add atoms and build a molecule.',
   nucleus: 'Pick an element to zoom into its nucleus: protons, neutrons, and the quarks inside them.',
+  zoom: 'Zoom from a drop of water down to a single quark, one power of ten at a time.',
 };
 
 function setMode(mode) {
@@ -359,13 +366,16 @@ function setMode(mode) {
   $('#atom-panel').hidden = mode !== 'atoms';
   $('#mol-panel').hidden = !mol;
   $('#nuc-panel').hidden = mode !== 'nucleus';
+  $('#zoom-panel').hidden = mode !== 'zoom';
   $('#tagline').textContent = TAGLINES[mode];
   document.querySelectorAll('.cell.selected').forEach((c) => c.classList.toggle('dim-select', mol));
   viewer.setActive(mode === 'atoms');
   molecules.setActive(mol);
   nucleus.setActive(mode === 'nucleus');
+  zoom.setActive(mode === 'zoom');
   if (mode === 'nucleus') nucleus.setElement(state.z);
   if (state.z && mode === 'atoms') history.replaceState(null, '', `#${ELEMENTS[state.z - 1].symbol}`);
+  if (mode === 'zoom') history.replaceState(null, '', '#zoom');
 }
 
 $('#app-mode').addEventListener('click', (e) => {
@@ -388,6 +398,8 @@ selectElement(fromHash ? fromHash.z : 6);
 if (hash.startsWith('mol') || hash.startsWith('smiles=')) {
   setMode('molecules');
   molecules.loadHash(hash);
+} else if (hash === 'zoom') {
+  setMode('zoom');
 } else if (hash.startsWith('nuc')) {
   setMode('nucleus');
   if (isotopeA) nucleus.setElement(state.z, +isotopeA);
