@@ -282,9 +282,16 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 
 - **Configurations** follow the Madelung (aufbau) rule, with the known exceptions
   (Cr, Cu, Pd, Au, the early actinides, and others) listed in `js/electron-config.js`.
-- **Orbital shapes** are hydrogen-like wavefunctions (real spherical harmonics ×
-  hydrogenic radial functions). They're scaled by an effective nuclear charge from
-  Slater's rules, so relative sizes across shells are realistic but approximate.
+- **Orbital shapes** combine real spherical harmonics (the angular part) with
+  numerical radial functions from a self-consistent density-functional
+  calculation of each atom (`js/atom-scf.js`): LDA with Slater exchange and
+  Perdew–Zunger correlation, solved by Numerov shooting on a log grid with
+  density mixing, in 20–200 ms per element. Orbital energies match the NIST LDA
+  reference tables to about 1 mHa, and orbital sizes are close to Hartree–Fock,
+  so 4s really is about four times larger than 3d in iron. Anions in ionic
+  compounds get a Watson sphere at their ionic radius, standing in for the
+  crystal field that binds their extra electrons. Relativity is not included.
+  Slater's-rules Z_eff is still shown for reference.
 - **Cloud** style draws points sampled from |ψ|². **Surface** style draws the
   isosurface that encloses ~85% of the probability (built with marching cubes).
 - **Phase** coloring shows the sign of ψ, so lobes of opposite sign and radial

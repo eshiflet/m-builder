@@ -7,6 +7,7 @@ import { createNucleusUI } from './nucleus-ui.js';
 import { createZoomUI } from './zoom-ui.js';
 import { radialChart, radialNote, emissionLines, spectrumStrip, hydrogenLevels, rampColor, RAMP_CSS } from './atom-extras.js';
 import { TRENDS, trendValue } from './atom-data.js';
+import { solveAtom } from './atom-scf.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -136,9 +137,11 @@ function selectElement(z, { fromNucleus = false } = {}) {
   state.spectrumPick = null;
 
   const config = electronConfig(z);
+  const scf = solveAtom(z, config); // self-consistent radial functions (~20–200 ms, cached)
   state.subshells = config.map((s) => ({
     ...s,
     zeff: slaterZeff(z, config, s.n, s.l),
+    radial: scf.orbitals.get(`${s.n}${s.l}`),
     orbitals: orbitalOccupancy(s.l, s.count).map((occ, k) => ({ id: `${s.n}-${s.l}-${k}`, k, occ })),
   }));
 
@@ -209,8 +212,10 @@ function renderInfo() {
     <div id="radial-wrap">${radialChart(state.subshells, { hidden: subshellHiddenKeys(), weighted: state.weighted })}</div>
     <p class="explain">${radialNote(state.subshells)}</p>
     ${spectrumHTML(el)}
-    <p class="note">Shapes are hydrogen-like orbitals scaled by a Slater effective nuclear charge, so sizes are
-      approximate. Each dot in a cloud is a sampled position from |ψ|²; the bright electron dots hop between
+    <p class="note">Radial shapes and sizes come from a self-consistent density-functional (LDA) calculation of
+      this atom, solved in your browser; the angular shapes are the usual real spherical harmonics. Orbital energies
+      match the NIST LDA reference tables to about 1 mHa; relativity is left out, which matters only for the heaviest
+      elements. Z<sub>eff</sub> is from Slater's rules, for reference. Each dot in a cloud is a sampled position from |ψ|²; the bright electron dots hop between
       such samples — they illustrate where an electron may be found, not a path it travels.</p>`;
 }
 

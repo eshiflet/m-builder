@@ -92,8 +92,13 @@ function radialCDF(n, l) {
   return entry;
 }
 
+// Every function below takes an optional `num`: a numerical radial function from the
+// self-consistent atom (js/atom-scf.js). When given, it replaces the hydrogen-like
+// radial part; the angular part is the same either way.
+
 /** Radius (bohr) containing the given fraction of the electron probability. */
-export function orbitalRadius(n, l, zeff, fraction = 0.9) {
+export function orbitalRadius(n, l, zeff, fraction = 0.9, num = null) {
+  if (num) return num.quantile(fraction);
   return radialCDF(n, l).quantile(fraction) * n / (2 * zeff);
 }
 
@@ -101,7 +106,7 @@ export function orbitalRadius(n, l, zeff, fraction = 0.9) {
  * Draw `count` positions from |ψ_nlk|² for a hydrogen-like orbital with
  * effective charge `zeff`. Returns positions (bohr) and the sign of ψ at each.
  */
-export function sampleOrbital(n, l, k, zeff, count) {
+export function sampleOrbital(n, l, k, zeff, count, num = null) {
   const ang = ANGULAR[l][k];
   const { quantile } = radialCDF(n, l);
   const scale = n / (2 * zeff);
@@ -109,7 +114,8 @@ export function sampleOrbital(n, l, k, zeff, count) {
   const signs = new Float32Array(count);
 
   for (let i = 0; i < count; i++) {
-    const rho = quantile(Math.random());
+    const p = Math.random();
+    const rho = num ? 0 : quantile(p);
     let x, y, z, a;
     do {
       z = 2 * Math.random() - 1;
@@ -120,11 +126,12 @@ export function sampleOrbital(n, l, k, zeff, count) {
       a = ang.f(x, y, z);
     } while (Math.random() * ang.max2 > a * a);
 
-    const r = rho * scale;
+    const r = num ? num.quantile(p) : rho * scale;
     positions[i * 3] = x * r;
     positions[i * 3 + 1] = y * r;
     positions[i * 3 + 2] = z * r;
-    signs[i] = Math.sign(laguerre(n - l - 1, 2 * l + 1, rho)) * Math.sign(a) || 1;
+    const radialSign = num ? Math.sign(num.uAt(r)) : Math.sign(laguerre(n - l - 1, 2 * l + 1, rho));
+    signs[i] = radialSign * Math.sign(a) || 1;
   }
   return { positions, signs };
 }
@@ -134,7 +141,7 @@ export function sampleOrbital(n, l, k, zeff, count) {
  * MarchingCubes expects), and find the |ψ| isovalue whose surface encloses
  * `fraction` of the probability.
  */
-export function psiField(n, l, k, zeff, res, extent, fraction = 0.85) {
+export function psiField(n, l, k, zeff, res, extent, fraction = 0.85, num = null) {
   const ang = ANGULAR[l][k];
   const field = new Float32Array(res * res * res);
   const half = res / 2;
@@ -147,7 +154,7 @@ export function psiField(n, l, k, zeff, res, extent, fraction = 0.85) {
       for (let xi = 0; xi < res; xi++, i++) {
         const x = ((xi - half) / half) * extent;
         const r = Math.hypot(x, y, z) || 1e-9;
-        field[i] = radial(n, l, r * toRho) * ang.f(x / r, y / r, z / r);
+        field[i] = (num ? num.R(r) : radial(n, l, r * toRho)) * ang.f(x / r, y / r, z / r);
       }
     }
   }
@@ -173,7 +180,11 @@ export function atomDensityTable(subshells, rMax = 14, steps = 1400) {
   const dr = rMax / steps;
   const table = new Float64Array(steps + 1);
   const R = new Float64Array(steps + 1);
-  for (const { n, l, count, zeff } of subshells) {
+  for (const { n, l, count, zeff, radial: num } of subshells) {
+    if (num) {
+      for (let i = 0; i <= steps; i++) table[i] += (count * num.R(i * dr) ** 2) / (4 * Math.PI);
+      continue;
+    }
     let normSq = 0;
     for (let i = 0; i <= steps; i++) {
       const r = i * dr;
@@ -186,7 +197,8 @@ export function atomDensityTable(subshells, rMax = 14, steps = 1400) {
 }
 
 /** Radial probability P(r) = r²R(r)² per bohr, normalized to 1, at the radii `rs` (bohr). */
-export function radialProbability(n, l, zeff, rs) {
+export function radialProbability(n, l, zeff, rs, num = null) {
+  if (num) return Float64Array.from(rs, (r) => num.uAt(r) ** 2);
   // Normalize over the whole function, which may extend past the radii asked for.
   const far = ((4 * n + 40) * n) / (2 * zeff), m = 4000, h = far / m;
   let norm = 0;

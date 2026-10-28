@@ -17,13 +17,13 @@ export function radialChart(subshells, { hidden = new Set(), hover = null, weigh
   // Past the second period the shells span a factor of ~100 in size, so use a log axis
   // and plot probability per ln r (r·P), which gives every shell a comparable peak.
   const log = subshells.length > 3;
-  const peakBohr = (s) => (s.n * s.n) / s.zeff;
+  const peakBohr = (s) => s.radial?.peak ?? (s.n * s.n) / s.zeff;
   const rMax = Math.min(14, Math.max(...subshells.map((s) => 2.6 * peakBohr(s) + 1.2)));
-  const rMin = log ? Math.min(...subshells.map((s) => 0.08 * peakBohr(s))) : 0;
+  const rMin = log ? Math.min(...subshells.map((s) => 0.12 * peakBohr(s))) : 0;
   const steps = 360;
   const rs = Array.from({ length: steps + 1 }, (_, i) => (log ? rMin * (rMax / rMin) ** (i / steps) : (i / steps) * rMax));
   const curves = subshells.map((s) => {
-    const P = radialProbability(s.n, s.l, s.zeff, rs);
+    const P = radialProbability(s.n, s.l, s.zeff, rs, s.radial);
     return { s, P: P.map((p, i) => p * (log ? rs[i] : 1) * (weighted ? s.count : 1)) };
   });
   const yMax = Math.max(...curves.map((c) => Math.max(...c.P))) * 1.08;

@@ -5,6 +5,7 @@ import { ATOM_COLORS, COVALENT_RADIUS, IONIC_RADIUS } from './molecule-data.js';
 import { ELEMENTS, CATEGORIES } from './elements.js';
 import { electronConfig, slaterZeff } from './electron-config.js';
 import { atomDensityTable } from './orbitals.js';
+import { solveAtom } from './atom-scf.js';
 import { PHASE_COLORS } from './viewer.js';
 import { chargeText } from './molecule.js';
 
@@ -583,7 +584,10 @@ export class MoleculeViewer {
       const key = `${a.z},${a.charge ?? 0}`;
       if (!tableCache.has(key)) {
         const config = electronConfig(a.z - (a.charge ?? 0)); // ions: add or remove valence electrons
-        tableCache.set(key, atomDensityTable(config.map((s) => ({ ...s, zeff: slaterZeff(a.z, config, s.n, s.l) }))));
+        // Anions are held by their crystal neighbors: a Watson sphere at the ionic radius.
+        const ionic = (a.charge ?? 0) < 0 ? (IONIC_RADIUS[`${a.symbol}${a.charge}`] ?? IONIC_RADIUS[a.symbol] ?? 1.4) / BOHR : null;
+        const scf = solveAtom(a.z, config, { watsonRadius: ionic });
+        tableCache.set(key, atomDensityTable(config.map((s) => ({ ...s, zeff: slaterZeff(a.z, config, s.n, s.l), radial: scf.orbitals.get(`${s.n}${s.l}`) }))));
       }
       return tableCache.get(key);
     });

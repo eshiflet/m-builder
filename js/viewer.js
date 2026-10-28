@@ -206,11 +206,11 @@ export class AtomViewer {
     const electronList = [];
 
     for (const sub of this.subshells) {
-      const radius = orbitalRadius(sub.n, sub.l, sub.zeff, 0.9);
+      const radius = orbitalRadius(sub.n, sub.l, sub.zeff, 0.9, sub.radial);
       for (const orb of sub.orbitals) {
         if (!orb.occ) continue;
         const count = Math.round(3200 * this.density * (orb.occ === 2 ? 1 : 0.6));
-        const { positions, signs } = sampleOrbital(sub.n, sub.l, orb.k, sub.zeff, count);
+        const { positions, signs } = sampleOrbital(sub.n, sub.l, orb.k, sub.zeff, count, sub.radial);
         const geom = new THREE.BufferGeometry();
         geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geom.setAttribute('aSign', new THREE.BufferAttribute(signs, 1));
@@ -237,7 +237,7 @@ export class AtomViewer {
         const visible = prevVisible.get(orb.id) ?? true;
         this.orbitals.set(orb.id, {
           points, material, positions, radius, visible,
-          n: sub.n, l: sub.l, k: orb.k, zeff: sub.zeff,
+          n: sub.n, l: sub.l, k: orb.k, zeff: sub.zeff, radial: sub.radial,
         });
 
         for (let e = 0; e < orb.occ; e++) electronList.push({ id: orb.id, radius, l: sub.l, positions });
@@ -318,8 +318,8 @@ export class AtomViewer {
   #buildSurface(o) {
     this.mc ??= new MarchingCubes(SURFACE_RES, new THREE.MeshBasicMaterial(), false, false, 60000);
     const mc = this.mc;
-    const extent = orbitalRadius(o.n, o.l, o.zeff, 0.97) * 1.05;
-    const { field, iso } = psiField(o.n, o.l, o.k, o.zeff, SURFACE_RES, extent);
+    const extent = orbitalRadius(o.n, o.l, o.zeff, 0.97, o.radial) * 1.05;
+    const { field, iso } = psiField(o.n, o.l, o.k, o.zeff, SURFACE_RES, extent, 0.85, o.radial);
     const meshes = [];
     for (const sign of [1, -1]) {
       mc.reset();

@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { electronConfig, slaterZeff, orbitalOccupancy } from './electron-config.js';
 import { sampleOrbital } from './orbitals.js';
+import { solveAtom } from './atom-scf.js';
 import { ATOM_COLORS } from './molecule-data.js';
 import { PROTON_COLOR, NEUTRON_COLOR, COLOR_CHARGES } from './nucleus-viewer.js';
 import { PHASE_COLORS } from './viewer.js';
@@ -185,13 +186,14 @@ export class ZoomViewer {
     const L = this.#layer('cloud', ANGSTROM);
     const z = 8;
     const config = electronConfig(z);
+    const scf = solveAtom(z, config);
     const pos = [], col = [];
     const pc = new THREE.Color(PHASE_COLORS.pos), nc = new THREE.Color(PHASE_COLORS.neg);
     for (const s of config) {
       const zeff = slaterZeff(z, config, s.n, s.l);
       orbitalOccupancy(s.l, s.count).forEach((occ, k) => {
         if (!occ) return;
-        const { positions, signs } = sampleOrbital(s.n, s.l, k, zeff, 2600 * occ);
+        const { positions, signs } = sampleOrbital(s.n, s.l, k, zeff, 2600 * occ, scf.orbitals.get(`${s.n}${s.l}`));
         for (let i = 0; i < signs.length; i++) {
           pos.push(positions[i * 3] * BOHR_A, positions[i * 3 + 1] * BOHR_A, positions[i * 3 + 2] * BOHR_A);
           (signs[i] > 0 ? pc : nc).toArray(col, col.length);
