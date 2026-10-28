@@ -131,7 +131,7 @@ export class MoleculeViewer {
     this.controls.autoRotateSpeed = 1.0;
 
     this.groups = {};
-    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges', 'hbonds', 'mo', 'vib']) {
+    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges', 'hbonds', 'mo', 'vib', 'polarity']) {
       this.groups[name] = new THREE.Group();
       this.scene.add(this.groups[name]);
     }
@@ -261,6 +261,7 @@ export class MoleculeViewer {
     this.selected = null;
     for (const [name, g] of Object.entries(this.groups)) {
       if (name === 'density' && this.mc) { g.remove(this.mc); }
+      if (name === 'polarity' && this.espMC) { g.remove(this.espMC); }
       if (name === 'mo') this.moKey = null;
       if (name === 'vib') { this.vibMol = null; this.vibDisp = null; }
       this.#clear(g);
@@ -571,8 +572,11 @@ export class MoleculeViewer {
     }
   }
 
-  // Promolecule density: the sum of each atom's own (spherical) electron density.
-  #buildDensity() {
+  /**
+   * Promolecule density on a res³ grid over [−half, half) Å: the sum of each atom's own
+   * (spherical) electron density, in e/bohr³. owner[i] is the atom contributing most.
+   */
+  #densityGrid(res) {
     const { atoms } = this.mol;
     const tableCache = new Map();
     const tables = atoms.map((a) => {
@@ -583,18 +587,11 @@ export class MoleculeViewer {
       }
       return tableCache.get(key);
     });
-    const colors = atoms.map((a) => new THREE.Color(atomColor(a.symbol)));
     const half = Math.max(...atoms.map((a) => Math.max(...a.pos.map(Math.abs)))) + 2.6;
-
-    if (!this.mc) {
-      this.mc = new MarchingCubes(DENSITY_RES, new THREE.MeshStandardMaterial({
-        vertexColors: true, transparent: true, opacity: 0.55, roughness: 0.35, side: THREE.DoubleSide, depthWrite: false,
-      }), false, true, 160000);
-    }
-    const mc = this.mc;
-    mc.reset();
-    const res = DENSITY_RES, h = res / 2, step = half / h;
+    const h = res / 2, step = half / h;
+    const field = new Float32Array(res * res * res);
     const best = new Float32Array(res * res * res);
+    const owner = new Int16Array(res * res * res).fill(-1);
     const CUTOFF = 4.5; // Å; atomic densities are negligible beyond this
     // Add each atom's density only over the grid cells near it.
     atoms.forEach((atom, a) => {
@@ -613,17 +610,110 @@ export class MoleculeViewer {
             if (idx >= t.table.length - 1) continue;
             const v = t.table[Math.floor(idx)];
             const i = row + xi;
-            mc.field[i] += v;
-            if (v > best[i]) { best[i] = v; colors[a].toArray(mc.palette, i * 3); }
+            field[i] += v;
+            if (v > best[i]) { best[i] = v; owner[i] = a; }
           }
         }
       }
     });
+    return { field, owner, half, step, res };
+  }
+
+  #buildDensity() {
+    const colors = this.mol.atoms.map((a) => new THREE.Color(atomColor(a.symbol)));
+    if (!this.mc) {
+      this.mc = new MarchingCubes(DENSITY_RES, new THREE.MeshStandardMaterial({
+        vertexColors: true, transparent: true, opacity: 0.55, roughness: 0.35, side: THREE.DoubleSide, depthWrite: false,
+      }), false, true, 160000);
+    }
+    const mc = this.mc;
+    mc.reset();
+    const { field, owner, half } = this.#densityGrid(DENSITY_RES);
+    mc.field.set(field);
+    for (let i = 0; i < owner.length; i++) if (owner[i] >= 0) colors[owner[i]].toArray(mc.palette, i * 3);
     mc.scale.setScalar(half);
     mc.isolation = this.iso;
     mc.update();
     this.groups.density.add(mc);
     this.densityBuilt = true;
+  }
+
+  /**
+   * Electrostatic potential mapped on the molecule's surface (the 0.002 e/bohr³
+   * density contour, about where neighbors touch), plus the dipole arrow.
+   * potential(p) → kcal/mol; dipole: { debye, vector, center } with vector toward δ−.
+   * Returns the color range used (kcal/mol).
+   */
+  setPolarity(potential, dipole, charges) {
+    const g = this.groups.polarity;
+    if (this.espMC) g.remove(this.espMC); // reused; don't dispose it
+    this.#clear(g);
+    if (!this.espMC) {
+      this.espMC = new MarchingCubes(DENSITY_RES, new THREE.MeshStandardMaterial({
+        vertexColors: true, transparent: true, opacity: 0.62, roughness: 0.4, side: THREE.DoubleSide, depthWrite: false,
+      }), false, true, 160000);
+    }
+    const mc = this.espMC;
+    mc.reset();
+    const ISO = 0.002;
+    const { field, half, step, res } = this.#densityGrid(DENSITY_RES);
+    mc.field.set(field);
+    // Potential only near the surface, where the colors are read.
+    const h = res / 2;
+    const near = [];
+    for (let i = 0; i < field.length; i++) if (field[i] > ISO / 4 && field[i] < ISO * 4) near.push(i);
+    const V = new Float32Array(near.length);
+    near.forEach((i, k) => {
+      const xi = i % res, yi = Math.floor(i / res) % res, zi = Math.floor(i / (res * res));
+      V[k] = potential([(xi - h) * step, (yi - h) * step, (zi - h) * step]);
+    });
+    const sorted = Float32Array.from(V, Math.abs).sort();
+    const range = Math.max(8, sorted[Math.floor(0.95 * (sorted.length - 1))] ?? 8);
+    const neg = new THREE.Color('#ff3b3b'), mid = new THREE.Color('#f4f4f4'), pos = new THREE.Color('#2f7dff');
+    const c = new THREE.Color();
+    near.forEach((i, k) => {
+      const t = Math.max(-1, Math.min(1, V[k] / range));
+      c.copy(mid).lerp(t < 0 ? neg : pos, Math.abs(t) ** 0.8);
+      c.toArray(mc.palette, i * 3);
+    });
+    mc.scale.setScalar(half);
+    mc.isolation = ISO;
+    mc.update();
+    g.add(mc);
+
+    // δ+ / δ− labels on atoms with a sizable partial charge.
+    this.mol.atoms.forEach((a, i) => {
+      const q = charges[i];
+      if (Math.abs(q) < 0.08) return;
+      const label = textSprite(`δ${q > 0 ? '+' : '−'}${Math.abs(q).toFixed(2)}`, { color: q > 0 ? '#9cc4ff' : '#ff9c9c', height: 0.17 * this.labelScale, weight: 700 });
+      label.position.copy(v3(a.pos)).add(new THREE.Vector3(0, 0, ballRadius(a) + 0.2));
+      g.add(label);
+    });
+
+    // Dipole arrow, drawn the chemist's way: toward the negative end, with a + at the tail.
+    if (dipole.debye >= 0.05) {
+      const dir = v3(dipole.vector);
+      const L = 0.9 + 0.55 * Math.min(dipole.debye, 6);
+      const start = v3(dipole.center).addScaledVector(dir, -L / 2);
+      const arrow = new THREE.ArrowHelper(dir, start, L, 0xffd75e, 0.32, 0.2);
+      for (const part of [arrow.line, arrow.cone]) { part.material.depthTest = false; part.renderOrder = 10; }
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, L - 0.3, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffd75e, depthTest: false }));
+      shaft.position.copy(start).addScaledVector(dir, (L - 0.3) / 2);
+      shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      shaft.renderOrder = 10;
+      // The cross stroke at the tail: the "+" end.
+      const perp = new THREE.Vector3().crossVectors(dir, Math.abs(dir.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)).normalize();
+      const cross = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.32, 10), shaft.material);
+      cross.position.copy(start).addScaledVector(dir, 0.22);
+      cross.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), perp);
+      cross.renderOrder = 10;
+      const label = textSprite(`μ = ${dipole.debye.toFixed(2)} D`, { color: '#ffd75e', height: 0.2 * this.labelScale, weight: 700 });
+      label.position.copy(start).addScaledVector(dir, L + 0.35);
+      g.add(arrow, shaft, cross, label);
+      mc.renderOrder = 1;
+    }
+    return range;
   }
 
   /**
@@ -684,18 +774,19 @@ export class MoleculeViewer {
     G.lonePairs.visible = v === 'structure' && this.options.lonePairs;
     G.orbitals.visible = v === 'orbitals';
     G.density.visible = v === 'density';
+    G.polarity.visible = v === 'polarity';
     G.mo.visible = v === 'mo';
     G.vib.visible = v === 'vib';
     G.angles.visible = this.options.angles && v !== 'vib';
     G.hbonds.visible = this.options.hbonds && v !== 'vib';
     for (const o of G.hbonds.children) if (o.userData.isLengthLabel) o.visible = this.options.lengths;
     G.lengths.visible = this.options.lengths && v !== 'vib';
-    G.charges.visible = v !== 'vib'; // static labels wouldn't follow the vibrating atoms
+    G.charges.visible = v !== 'vib' && v !== 'polarity'; // static labels wouldn't follow the vibrating atoms
   }
 
   fit() {
     if (!this.mol) return;
-    const r = Math.max(...this.mol.atoms.map((a) => Math.hypot(...a.pos) + ballRadius(a))) + (this.view === 'structure' ? 0.45 : 0.75);
+    const r = Math.max(...this.mol.atoms.map((a) => Math.hypot(...a.pos) + ballRadius(a))) + (this.view === 'structure' ? 0.45 : this.view === 'polarity' ? 1.5 : 0.75);
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
     const dist = r / Math.sin(Math.min(vfov, hfov) / 2);

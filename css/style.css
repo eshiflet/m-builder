@@ -558,3 +558,6 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .hlevels .trans { stroke-width: 1.6; opacity: 0.55; }
 .hlevels .trans.sel { stroke-width: 3; opacity: 1; }
 .hlevels .series { fill: var(--muted); font-size: 10px; font-weight: 600; }
+
+.esp-bar { display: inline-flex; align-items: center; gap: 6px; }
+.esp-bar i { display: inline-block; width: 90px; height: 9px; border-radius: 3px; background: linear-gradient(90deg, #ff3b3b, #f4f4f4, #2f7dff); }

@@ -113,6 +113,16 @@ Link to a molecule with `#mol=H2O`, to an ion with `#mol=CO3&q=-2`, to a
 specific isomer and conformer with `#mol=C6H12O6&v=1&c=2`, or to any SMILES
 with `#smiles=CCO`.
 
+**Polarity** colors the molecule's surface (the 0.002 e/bohr³ contour of the
+promolecule density) by electrostatic potential: red where electrons pile up
+(δ−), blue where nuclei are exposed (δ+). Partial charges come from
+Gasteiger–Marsili electronegativity equalization, plus a small dipole along
+each lone pair (fit to measured dipoles: mean error about 0.3 D over 25
+molecules). A gold arrow shows the dipole moment, drawn from + to −, with the
+measured value alongside where known. Water is polar and CO₂ isn't, because the
+bent shape adds the bond dipoles while the straight one cancels them. Carbon
+monoxide is flagged as the case point charges get wrong.
+
 ## Nucleus
 
 Switch to **Nucleus** and pick an element. The electrons are left behind, and
@@ -306,6 +316,7 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - `js/nuclide-chart.js`: chart of nuclides canvas (zoom, pan, pick)
 - `js/atom-data.js`: ionization energies, electronegativities, radii, emission lines
 - `js/atom-extras.js`: radial plots, spectrum strip, hydrogen level diagram, trend colors
+- `js/polarity.js`: Gasteiger charges, lone-pair dipoles, dipole moment, electrostatic potential, measured dipoles
 - `js/eht.js`: Extended Hückel molecular orbitals (STO-3G overlaps, Jacobi eigensolver)
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI

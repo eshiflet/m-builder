@@ -6,6 +6,7 @@ import {
 } from './molecule.js';
 import { configHTML } from './electron-config.js';
 import { computeMOs, moField } from './eht.js';
+import { polarity, potentialAt, measuredDipole } from './polarity.js';
 import { normalModes, MEASURED } from './vibrations.js';
 import { sci } from './nucleus-data.js';
 import { MoleculeViewer, atomColor, SIGMA_COLOR, H1S_COLOR, TRANSFER_COLOR, HBOND_COLOR } from './molecule-viewer.js';
@@ -136,6 +137,7 @@ export function createMoleculeUI({ onTrayChange }) {
     vibIndex = null;
     if (view === 'mo') showMO();
     if (view === 'vib') showVibration();
+    if (view === 'polarity') showPolarity();
     renderTitle();
     renderInfo();
   }
@@ -239,6 +241,65 @@ export function createMoleculeUI({ onTrayChange }) {
       <p class="note">${VIEW_TEXT.vib}</p>`;
     renderLegend();
   }
+
+  // ---------- polarity ----------
+
+  const polCache = new WeakMap();
+  let espRange = null;
+  function polData() {
+    if (!mol || mol.error) return null;
+    if (!polCache.has(mol)) polCache.set(mol, polarity(mol));
+    return polCache.get(mol);
+  }
+
+  function showPolarity() {
+    const pol = polData();
+    if (!pol) return;
+    espRange = viewer.setPolarity((p) => potentialAt(p, mol, pol), pol.dipole, pol.charges);
+    renderLegend();
+  }
+
+  function renderPolarityInfo() {
+    const pol = polData();
+    const name = mol.name ?? unnamed();
+    if (!pol) {
+      $('#mol-info').innerHTML = `<h2>${name}</h2><p class="muted">Partial charges aren’t parameterized for one of these elements (Gasteiger charges cover H, B, C, N, O, F, Si, P, S, Cl, Br and I).</p>`;
+      return;
+    }
+    const d = pol.dipole;
+    const meas = measuredDipole(mol);
+    const sym = d.debye < 0.05;
+    const rows = mol.atoms.map((a, i) => ({ a, i, q: pol.charges[i] }))
+      .filter((r) => r.a.symbol !== 'H' || Math.abs(r.q) > 0.1)
+      .sort((x, y) => x.q - y.q);
+    const seen = new Set();
+    const list = rows.filter((r) => { const k = `${r.a.symbol}${r.q.toFixed(2)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+      .slice(0, 8).map((r) => `<li>${r.a.symbol}${mol.atoms.filter((x) => x.symbol === r.a.symbol).length > 1 ? `<sub>${r.i + 1}</sub>` : ''} <b style="color:${r.q < 0 ? '#ff9c9c' : '#9cc4ff'}">${r.q >= 0 ? '+' : '−'}${Math.abs(r.q).toFixed(2)}</b></li>`).join('');
+    const verdict = mol.ionic ? `Ionic: the charges are whole electrons, so this is as polar as it gets.${meas != null ? ' The real dipole is smaller because each ion’s electron cloud is pulled toward the other (polarization).' : ''}`
+      : sym && meas === 0 ? 'Nonpolar overall. The bonds may be polar, but they point in balanced directions and their dipoles cancel by symmetry.'
+      : sym ? 'Nonpolar by symmetry: the bond dipoles cancel.'
+      : d.debye < 0.6 ? 'Weakly polar.' : d.debye < 2 ? 'Polar.' : 'Strongly polar.';
+    const bondPolar = mol.bonds.some((b) => Math.abs(pol.charges[b.a] - pol.charges[b.b]) > 0.2);
+    const cancel = sym && bondPolar && !mol.ionic
+      ? `<p class="explain">Compare this with water: CO₂’s two C=O bonds are just as lopsided, but the molecule is straight, so they pull equally in opposite directions. Water is bent, so its two O–H dipoles add up, which is why water dissolves salts and CO₂ doesn’t.</p>` : '';
+    const coNote = hillOf(mol) === 'CO'
+      ? '<p class="explain"><b>Carbon monoxide is the famous exception.</b> Oxygen is more electronegative, so charges alone make C⁺–O⁻ with about 1 D. The real dipole is only 0.11 D and points the other way, because carbon’s lone pair bulges out far from the nucleus. Point-charge models can’t capture that.</p>' : '';
+    $('#mol-info').innerHTML = `
+      <div class="info-head"><div><h2>${name} <span class="muted">· polarity</span></h2>
+        <div class="muted">${formulaHTML(mol.formula, mol.charge)}</div></div></div>
+      <div class="chart-card"><div class="big">${d.debye.toFixed(2)} D</div><div><b>Dipole moment</b>${meas != null ? ` · measured <b>${meas.toFixed(2)} D</b>` : ''}<br>
+        <span class="muted">${verdict}${mol.charge ? ' For an ion the dipole depends on the origin; it’s taken about the center of mass.' : ''}</span></div></div>
+      ${cancel}${coNote}
+      <p class="explain">The surface is where the molecule’s electron cloud thins out to 0.002 electrons per bohr³, roughly where a neighbor would touch it. Its color is the <b>electrostatic potential</b> there: what a small positive charge would feel. <b style="color:#ff6b6b">Red</b> regions are electron-rich (δ−) and attract positive ions and the hydrogen side of other molecules; <b style="color:#6fa8ff">blue</b> regions are electron-poor (δ+). The gold arrow is the <b>dipole moment</b>, drawn the chemist’s way: from the positive end (the crossed tail) toward the negative end.</p>
+      <div class="facts"><div><h3>Partial charges (e)</h3><ul>${list}</ul></div></div>
+      <p class="note">Partial charges from Gasteiger–Marsili electronegativity equalization, plus a small dipole for each lone pair (fit to measured dipoles: mean error about 0.3 D over 25 molecules). Of the ${d.debye.toFixed(2)} D, ${d.fromCharges.toFixed(2)} D comes from the charges. The surface is a promolecule density (overlapping atoms), so it ignores the small changes bonding makes to its shape.</p>`;
+  }
+
+  const hillOf = (m) => {
+    const n = new Map();
+    for (const a of m.atoms) n.set(a.symbol, (n.get(a.symbol) ?? 0) + 1);
+    return [...n].map(([k, v]) => `${k}${v > 1 ? v : ''}`).sort().join('');
+  };
 
   // ---------- molecular orbitals ----------
 
@@ -437,6 +498,12 @@ export function createMoleculeUI({ onTrayChange }) {
   }
 
   function renderLegendBase() {
+    if (view === 'polarity') {
+      $('#mol-legend').innerHTML = espRange
+        ? `<span class="esp-bar"><span>−${espRange.toFixed(0)}</span><i></i><span>+${espRange.toFixed(0)} kcal/mol</span></span><span><i style="background:#ffd75e"></i>dipole (+ → −)</span>`
+        : '';
+      return;
+    }
     if (view === 'vib') {
       $('#mol-legend').innerHTML = '<span><i style="background:#ffd75e"></i>motion path (exaggerated)</span>';
       return;
@@ -510,6 +577,7 @@ export function createMoleculeUI({ onTrayChange }) {
   }
 
   function renderInfo() {
+    if (view === 'polarity') return renderPolarityInfo();
     if (view === 'mo') return renderMOInfo();
     if (view === 'vib') return renderVibInfo();
     const { atoms, bonds } = mol;
@@ -658,7 +726,9 @@ export function createMoleculeUI({ onTrayChange }) {
     viewer.setView(view);
     if (view === 'mo') showMO();
     if (view === 'vib') showVibration();
+    if (view === 'polarity') showPolarity();
     if (mol && !mol.error) renderInfo();
+    renderLegend();
   });
 
   $('#mol-info').addEventListener('click', (e) => {
