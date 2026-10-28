@@ -201,7 +201,19 @@ Very light nuclei (A < 40) are less reliable, so a couple use measured values.
   of inertia matches I = 3ħ²/E(2⁺): about 40% of rigid for ²³⁸U, versus 5% for an
   ideal fluid. **Flow** switches between Rigid, Measured mix and Superfluid.
 
-Amplitudes are exaggerated so they can be seen.
+Amplitudes are exaggerated so they can be seen. The three giant resonances are **damped**: each
+excitation rings down with amplitude e^(−Γt/2ħ) and a new γ-ray re-excites it
+every few cycles. Widths come from systematics (GDR Γ ≈ 0.026·E^1.91,
+broadened by deformation; GMR ≈ 0.2E; GQR ≈ 0.27E), giving 3.9 MeV for the
+²⁰⁸Pb GDR against 4.0 measured, so it dies within about one cycle. Uncheck
+**Damped** to see the idealized undamped mode.
+
+**Pear-shaped nuclei.** ²²²⁻²²⁸Ra, ¹⁴⁴,¹⁴⁶Ba and ²²⁰Rn (an octupole vibrator)
+carry a measured octupole deformation β₃ ≈ 0.06–0.17 alongside their β₂. Their
+mean field is R(θ) = R₀(1 + β₁Y₁₀ + β₂Y₂₀ + β₃Y₃₀), with β₁ solved so the center
+of mass stays put. The panel explains why pear shapes matter for electric
+dipole moment searches. Their measured α and β decays were added too: Gamow
+tunneling gives ²²⁴Ra a half-life of 3.7 days, against 3.63 measured.
 
 **Decay & reactions** plays what the selected isotope does, with captions and
 a chart. Q values and half-lives are measured for about 60 well-known nuclides;

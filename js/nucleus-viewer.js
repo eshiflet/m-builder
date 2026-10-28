@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { NUCLEONS, haloKappa } from './nucleus-data.js';
+import { NUCLEONS, haloKappa, HBAR_MEV_S } from './nucleus-data.js';
 
 // Units: femtometers (fm) and "babyseconds" (bs = 10⁻²³ s), in which light moves 3 fm/bs.
 const C = 2.99792458; // fm per babysecond
@@ -165,6 +165,7 @@ export class NucleusViewer {
     this.timeRate = 4; // babyseconds per real second
     this.spin = 10;
     this.flow = 'mixed'; // rotation: 'rigid', 'fluid' (irrotational), or the measured 'mixed'
+    this.damped = true; // giant resonances ring down and get re-excited
     this.t = 0; // clock, in babyseconds
     this.periods = {}; // mode → period in babyseconds
     this.clock = new THREE.Clock();
@@ -203,9 +204,11 @@ export class NucleusViewer {
    * iso: { Z, N, A, halo }, beta: ground-state β₂, radii: { Rp, Rn, a },
    * periods: { dipole, breathing, quadrupole } in babyseconds, E2: rotational E(2⁺) in MeV.
    */
-  setNucleus(iso, beta, radii, periods, E2) {
+  setNucleus(iso, beta, radii, periods, E2, beta3 = 0) {
     this.iso = iso;
     this.beta = beta;
+    this.beta3 = beta3;
+    this.beta1 = beta3 ? this.#centerShift(beta, beta3) : 0;
     this.radii = radii;
     this.periods = periods;
     this.E2 = E2;
@@ -247,7 +250,7 @@ export class NucleusViewer {
       for (let tries = 0; tries < 200; tries++) {
         const r = (w.R + 3 * w.a) * Math.cbrt(rand());
         const ct = 2 * rand() - 1, ph = 2 * Math.PI * rand(), st = Math.sqrt(1 - ct * ct);
-        const R = w.R * this.#shape(ct, w.beta);
+        const R = w.R * this.#shape(ct, w.beta, w.beta3, w.beta1);
         if (rand() < 1 / (1 + Math.exp((r - R) / w.a))) {
           pos.set([r * st * Math.cos(ph), r * st * Math.sin(ph), r * ct], i * 3);
           break;
@@ -348,21 +351,55 @@ export class NucleusViewer {
   }
 
   /** R(θ)/R₀ for a quadrupole shape: 1 + β·Y₂₀(θ), volume-normalized to second order. */
-  #shape(cosTheta, beta) {
-    const y20 = 0.6307831 * (1.5 * cosTheta * cosTheta - 0.5); // √(5/4π)·P₂
-    return (1 + beta * y20) / (1 + (beta * beta) / (4 * Math.PI)) ** (1 / 3);
+  /**
+   * R(θ)/R₀ = 1 + β₁Y₁₀ + β₂Y₂₀ + β₃Y₃₀, normalized to constant volume. The octupole
+   * term β₃ makes a pear; β₁ (set by #centerShift) keeps its center of mass at the origin.
+   */
+  #shape(cosTheta, beta, beta3 = 0, beta1 = 0) {
+    const c = cosTheta;
+    const y20 = 0.6307831 * (1.5 * c * c - 0.5); // √(5/4π)·P₂
+    const y30 = beta3 ? 0.7463527 * (2.5 * c * c * c - 1.5 * c) : 0; // √(7/4π)·P₃
+    const y10 = 0.4886025 * c; // √(3/4π)·P₁
+    return (1 + beta * y20 + beta3 * y30 + beta1 * y10) / (1 + (beta * beta + beta3 * beta3) / (4 * Math.PI)) ** (1 / 3);
+  }
+
+  /** β₁ that puts the center of mass of the β₂, β₃ shape at the origin. */
+  #centerShift(beta, beta3) {
+    const zc = (b1) => { // ∫ R⁴ cosθ dΩ, proportional to the center of mass
+      let t = 0;
+      for (let i = 0; i < 200; i++) { const c = -1 + (2 * (i + 0.5)) / 200; t += this.#shape(c, beta, beta3, b1) ** 4 * c; }
+      return t;
+    };
+    let b1 = 0;
+    for (let k = 0; k < 8; k++) { const f = zc(b1), d = (zc(b1 + 1e-4) - f) / 1e-4; b1 -= f / d; }
+    return b1;
   }
 
   // ---------- the collective drive: how the mean field moves at time t ----------
 
+  /**
+   * Giant resonances are damped: each excitation rings down with amplitude e^{−t/τ},
+   * τ = 2ħ/Γ, and a new γ-ray re-excites it every few periods. Returns the phase and
+   * amplitude envelope at time t (babyseconds).
+   */
+  #ring(t) {
+    const T = this.periods[this.mode];
+    const tau = this.damped ? this.dampTimes?.[this.mode] : null;
+    if (!T) return { phase: 0, env: 0 };
+    if (!tau) return { phase: (2 * Math.PI * t) / T, env: 1 };
+    const every = Math.max(4 * T, 5 * tau);
+    const local = t % every;
+    this.excitation = Math.floor(t / every);
+    return { phase: (2 * Math.PI * local) / T, env: Math.exp(-local / tau) };
+  }
+
   #drive(t) {
     const d = { scale: 1, beta: this.beta, shift: 0, angle: 0 };
-    const T = this.periods[this.mode];
-    const phase = T ? (2 * Math.PI * t) / T : 0;
+    const { phase, env } = this.#ring(t);
     // Amplitudes are exaggerated so the motion is visible.
-    if (this.mode === 'breathing') d.scale = 1 + 0.08 * Math.sin(phase);
-    else if (this.mode === 'quadrupole') d.beta = this.beta + 0.18 * Math.sin(phase);
-    else if (this.mode === 'dipole') d.shift = 0.9 * Math.sin(phase);
+    if (this.mode === 'breathing') d.scale = 1 + 0.08 * env * Math.sin(phase);
+    else if (this.mode === 'quadrupole') d.beta = this.beta + 0.18 * env * Math.sin(phase);
+    else if (this.mode === 'dipole') d.shift = 0.9 * env * Math.sin(phase);
     else if (this.mode === 'rotation' && this.periods.rotation) d.angle = (2 * Math.PI * t) / this.periods.rotation;
     return d;
   }
@@ -389,7 +426,7 @@ export class NucleusViewer {
     const R = (proton ? radii.Rp : radii.Rn) * d.scale;
     // Dipole: protons and neutrons move oppositely, keeping the center of mass fixed.
     const shift = proton ? (d.shift * iso.N) / A : (-d.shift * iso.Z) / A;
-    return { R, a: radii.a, V: V0, beta: d.beta, shift, kT: KT };
+    return { R, a: radii.a, V: V0, beta: d.beta, beta3: this.beta3, beta1: this.beta1, shift, kT: KT };
   }
 
   // ---------- decays and reactions ----------
@@ -773,7 +810,7 @@ export class NucleusViewer {
       const x = pos[3 * i] - cw[0], y0 = pos[3 * i + 1] - cw[1], z0 = pos[3 * i + 2] - cw[2];
       const y = cr * y0 + sr * z0, z = -sr * y0 + cr * z0 - w.shift;
       const r = Math.hypot(x, y, z) || 1e-6;
-      const s = r - w.R * this.#shape(z / r, w.beta);
+      const s = r - w.R * this.#shape(z / r, w.beta, w.beta3, w.beta1);
       const e = Math.exp(Math.min(40, s / w.a));
       const dUds = (w.V / w.a) * e / ((1 + e) * (1 + e)); // MeV/fm, pulling inward
       // Inward along the body-frame radius, rotated back to the lab frame.
@@ -872,6 +909,11 @@ export class NucleusViewer {
   setTimeRate(r) { this.timeRate = r; }
   setSpin(J) { this.spin = J; }
   setPeriods(periods) { this.periods = periods; }
+  /** widths: { mode: Γ in MeV } for the damped giant resonances. */
+  setWidths(widths) {
+    this.dampTimes = Object.fromEntries(Object.entries(widths).map(([k, G]) => [k, (2 * HBAR_MEV_S) / G / 1e-23]));
+  }
+  setDamped(on) { this.damped = on; }
   setQuarks(on) { this.showQuarks = on; this.#applyVisibility(); }
   setField(on) { this.showField = on; this.#applyVisibility(); }
   setRuler(on) { this.showRuler = on; this.#applyVisibility(); }

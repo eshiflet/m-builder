@@ -139,7 +139,23 @@ const LIGHT_SHAPES = { '10,10': 0.45, '12,12': 0.45, '4,4': 0.6, '6,6': -0.4 };
  * Nilsson–Strutinsky calculation in nuclear-shape.js, with the energy-vs-shape curve.
  * `depth` is how much energy deforming saves: large → rigid, small → soft.
  */
+// Pear-shaped (octupole-deformed) nuclei: measured [β₂, β₃] from Coulomb excitation,
+// ²²⁴Ra (Gaffney et al. 2013), ¹⁴⁴Ba and ¹⁴⁶Ba (Bucher et al. 2016–17), ²²²,²²⁶,²²⁸Ra
+// (Wollersheim 1993; Butler et al. 2020). Approximate (±0.01–0.03). ²²⁰Rn is an
+// octupole vibrator: soft, not permanently pear-shaped. A quadrupole-only calculation
+// misses their β₂ too, since mixing in the octupole shape is what deepens it.
+export const OCTUPOLE = {
+  '88,134': [0.19, 0.11], '88,136': [0.154, 0.10], '88,138': [0.20, 0.10], '88,140': [0.21, 0.07],
+  '56,88': [0.18, 0.17], '56,90': [0.20, 0.11], '86,134': [0.11, 0.06],
+};
+
 export function deformation(Z, N) {
+  const oct = OCTUPOLE[`${Z},${N}`];
+  if (!oct) return { ...quadrupoleShape(Z, N), beta3: 0 };
+  return { ...quadrupoleShape(Z, N), beta: oct[0], beta3: oct[1], source: 'measured' };
+}
+
+function quadrupoleShape(Z, N) {
   const A = Z + N;
   if (A < 8) {
     const m = LIGHT_SHAPES[`${Z},${N}`];
@@ -162,7 +178,14 @@ export const BABYSECOND = 1e-23; // s; light crosses 3 fm in one babysecond
  */
 export const rotationPeriod = (E2, J) => (2 * Math.PI * 6 * HBAR_MEV_S) / ((2 * J + 1) * E2);
 
-/** Collective oscillations: energy (MeV) and period (s). */
+/**
+ * Collective oscillations: energy E (MeV), period T (s), and for the giant resonances
+ * the width Γ (MeV). A resonance of width Γ loses its energy at the rate Γ/ħ (its
+ * amplitude at Γ/2ħ): into more complicated nucleon motion (the "spreading width") and
+ * by emitting particles. Widths from systematics: GDR Γ ≈ 0.026·E^1.91 for spherical
+ * nuclei (Carlos et al.), broadened in deformed ones where the peak splits in two;
+ * GMR Γ ≈ 0.2·E and GQR Γ ≈ 0.27·E (about 3 MeV in ²⁰⁸Pb).
+ */
 export function collectiveModes(Z, A, beta) {
   const dipole = 31.2 * A ** (-1 / 3) + 20.6 * A ** (-1 / 6); // Berman & Fultz systematics
   const monopole = 80 * A ** (-1 / 3);
@@ -170,9 +193,9 @@ export function collectiveModes(Z, A, beta) {
   // Lowest rotational state of a deformed nucleus (Grodzins): E(2⁺) ≈ 1225 / (A^(7/3) β²) MeV.
   const rotation = Math.abs(beta) >= 0.1 ? 1225 / (A ** (7 / 3) * beta * beta) : null;
   const out = {
-    dipole: { E: dipole, T: period(dipole) },
-    breathing: { E: monopole, T: period(monopole) },
-    quadrupole: { E: quadrupole, T: period(quadrupole) },
+    dipole: { E: dipole, T: period(dipole), width: 0.026 * dipole ** 1.91 + 0.6 * Math.abs(beta) * dipole },
+    breathing: { E: monopole, T: period(monopole), width: 0.2 * monopole },
+    quadrupole: { E: quadrupole, T: period(quadrupole), width: 0.27 * quadrupole },
     rotation: rotation ? { E: rotation, T: period(rotation) } : null,
   };
   if (A < 4) for (const k of ['dipole', 'breathing', 'quadrupole']) out[k] = null; // too few nucleons for a collective mode
@@ -219,6 +242,12 @@ export const DECAYS = {
   '94,244': { modes: [['α', 4.666]], t: 8.0e7 * YEAR, fission: true },
   '88,226': { modes: [['α', 4.871]], t: 1600 * YEAR },
   '86,222': { modes: [['α', 5.590]], t: 3.8235 * DAY },
+  '88,224': { modes: [['α', 5.789]], t: 3.632 * DAY },
+  '88,222': { modes: [['α', 6.679]], t: 38.0 },
+  '88,228': { modes: [['β⁻', 0.0459]], t: 5.75 * YEAR },
+  '86,220': { modes: [['α', 6.405]], t: 55.6 },
+  '56,144': { modes: [['β⁻', 3.12]], t: 11.5 },
+  '56,146': { modes: [['β⁻', 4.1]], t: 2.22 },
   '84,210': { modes: [['α', 5.407]], t: 138.38 * DAY },
   '84,209': { modes: [['α', 4.979]], t: 124 * YEAR },
   '84,212': { modes: [['α', 8.954]], t: 2.99e-7 },
