@@ -4,11 +4,13 @@ import { ANGULAR } from './orbitals.js';
 import { AtomViewer, SUBSHELL_COLORS, PHASE_COLORS } from './viewer.js';
 import { createMoleculeUI } from './molecule-ui.js';
 import { createNucleusUI } from './nucleus-ui.js';
+import { radialChart, radialNote, emissionLines, spectrumStrip, hydrogenLevels, rampColor, RAMP_CSS } from './atom-extras.js';
+import { TRENDS, trendValue } from './atom-data.js';
 
 const $ = (sel) => document.querySelector(sel);
 
 const viewer = new AtomViewer($('#canvas'));
-const state = { z: null, subshells: [], hidden: new Set(), mode: 'atoms' };
+const state = { z: null, subshells: [], hidden: new Set(), mode: 'atoms', weighted: false, spectrumPick: null, trend: 'category' };
 const molecules = createMoleculeUI({ onTrayChange: showTrayCounts });
 // When the Nucleus view moves to another element itself (e.g. a decay's daughter), follow it in the table.
 const nucleus = createNucleusUI({ onElementChange: (z) => selectElement(z, { fromNucleus: true }) });
@@ -53,15 +55,58 @@ function buildTable() {
   table.addEventListener('pointerleave', () => showReadout(state.z));
 
   const legend = $('#legend');
-  legend.innerHTML = Object.entries(CATEGORIES)
-    .map(([key, c]) => `<li data-cat="${key}"><span class="swatch" style="background:${c.color}"></span>${c.label}</li>`)
-    .join('');
+  renderLegend();
   const focusCategory = (cat) => {
     table.classList.toggle('focusing', !!cat);
     table.querySelectorAll('.cell').forEach((c) => c.classList.toggle('focus', c.dataset.cat === cat));
   };
   legend.addEventListener('pointerover', (e) => focusCategory(e.target.closest('li')?.dataset.cat));
   legend.addEventListener('pointerleave', () => focusCategory(null));
+}
+
+// ---------- Periodic trends ----------
+
+function renderLegend() {
+  const legend = $('#legend');
+  if (state.trend === 'category') {
+    legend.classList.remove('trend');
+    legend.innerHTML = Object.entries(CATEGORIES)
+      .map(([key, c]) => `<li data-cat="${key}"><span class="swatch" style="background:${c.color}"></span>${c.label}</li>`)
+      .join('');
+    return;
+  }
+  const t = TRENDS[state.trend];
+  const [lo, hi] = trendRange(t);
+  legend.classList.add('trend');
+  legend.innerHTML = `<li class="trend-bar"><span>≤ ${lo.toFixed(t.digits ? 1 : 0)}</span><i style="background:${RAMP_CSS}"></i><span>≥ ${hi.toFixed(t.digits ? 1 : 0)} ${t.unit}</span></li>
+    <li class="trend-text">${t.text}</li>`;
+}
+
+/** Color range: 5th to 95th percentile, so a few extremes (helium) don't wash out the rest. */
+function trendRange(t) {
+  const v = t.values.filter((x) => x != null).sort((a, b) => a - b);
+  return [v[Math.floor(0.05 * (v.length - 1))], v[Math.ceil(0.95 * (v.length - 1))]];
+}
+
+function applyTrend(key) {
+  state.trend = key;
+  document.querySelectorAll('#trend button').forEach((b) => b.classList.toggle('on', b.dataset.value === key));
+  const t = TRENDS[key];
+  const [lo, hi] = t ? trendRange(t) : [0, 1];
+  document.querySelectorAll('#table .cell[data-z]').forEach((cell) => {
+    const z = +cell.dataset.z;
+    const el = ELEMENTS[z - 1];
+    cell.querySelector('.val')?.remove();
+    if (!t) { cell.style.setProperty('--cat', CATEGORIES[el.category].color); cell.classList.remove('no-data'); return; }
+    const v = trendValue(key, z);
+    cell.classList.toggle('no-data', v == null);
+    cell.style.setProperty('--cat', v == null ? '#3a4150' : rampColor((v - lo) / (hi - lo)));
+    if (v != null) cell.insertAdjacentHTML('beforeend', `<span class="val">${v.toFixed(t.digits ? (v >= 10 ? 1 : t.digits) : 0)}</span>`);
+  });
+  document.querySelectorAll('#table .placeholder').forEach((ph) => ph.style.setProperty('--cat', t ? '#3a4150' : CATEGORIES[ph.dataset.cat].color));
+  $('#table').classList.toggle('trending', !!t);
+  renderLegend();
+  showReadout(state.z);
 }
 
 function showReadout(z) {
@@ -74,7 +119,7 @@ function showReadout(z) {
     </div>
     <div class="readout-text">
       <div class="readout-name">${el.name}</div>
-      <div class="readout-meta">${cat.label} · ${el.mass} u</div>
+      <div class="readout-meta">${cat.label} · ${el.mass} u${state.trend !== 'category' ? ` · ${TRENDS[state.trend].label.toLowerCase()} ${trendValue(state.trend, z) ?? '—'}${trendValue(state.trend, z) != null ? ` ${TRENDS[state.trend].unit}` : ''}` : ''}</div>
       <div class="readout-config">${configHTML(el.z)}</div>
     </div>`;
 }
@@ -86,6 +131,7 @@ function selectElement(z, { fromNucleus = false } = {}) {
   const el = ELEMENTS[z - 1];
   state.z = z;
   state.hidden = new Set();
+  state.spectrumPick = null;
 
   const config = electronConfig(z);
   state.subshells = config.map((s) => ({
@@ -153,9 +199,41 @@ function renderInfo() {
     </div>
     <p class="hint">Click a subshell or orbital box to hide or show it; hover to highlight it.</p>
     <div class="sub-list">${rows}</div>
+    <div class="section-head"><h3>Radial probability</h3>
+      <div class="segmented small" id="radial-mode">
+        <button data-value="per" class="${state.weighted ? '' : 'on'}">Per electron</button>
+        <button data-value="all" class="${state.weighted ? 'on' : ''}">× electrons</button>
+      </div></div>
+    <div id="radial-wrap">${radialChart(state.subshells, { hidden: subshellHiddenKeys(), weighted: state.weighted })}</div>
+    <p class="explain">${radialNote(state.subshells)}</p>
+    ${spectrumHTML(el)}
     <p class="note">Shapes are hydrogen-like orbitals scaled by a Slater effective nuclear charge, so sizes are
       approximate. Each dot in a cloud is a sampled position from |ψ|²; the bright electron dots hop between
       such samples — they illustrate where an electron may be found, not a path it travels.</p>`;
+}
+
+function subshellHiddenKeys() {
+  return new Set(state.subshells.filter((s) => s.orbitals.every((o) => !o.occ || state.hidden.has(o.id))).map((s) => s.key));
+}
+
+function spectrumHTML(el) {
+  const lines = emissionLines(el.symbol);
+  if (!lines) {
+    return `<div class="section-head"><h3>Emission spectrum</h3></div><p class="muted">No visible lines tabulated here for ${el.name}. Try H, He, Li, Na, Ne, Hg or Cu.</p>`;
+  }
+  const pick = state.spectrumPick != null ? lines[state.spectrumPick] : null;
+  const pickText = pick ? `<p class="spectrum-pick"><b>${pick.nm.toFixed(1)} nm</b>${pick.from ? ` · n = ${pick.from} → 2 · photon energy ${(1239.84 / pick.nm).toFixed(2)} eV` : ` · photon energy ${(1239.84 / pick.nm).toFixed(2)} eV`}</p>` : '';
+  if (el.symbol === 'H') {
+    return `<div class="section-head"><h3>Emission spectrum</h3></div>
+      ${spectrumStrip(lines, state.spectrumPick)}${pickText}
+      ${hydrogenLevels(pick ? [pick.from, pick.to] : null)}
+      <p class="explain">An electron dropping from a higher level to a lower one emits a photon carrying the energy difference, E = 13.6 eV × (1/n₁² − 1/n₂²). Only the drops to n = 2 (the <b>Balmer series</b>) give visible light: red Hα at 656.3 nm, blue-green Hβ at 486.1 nm, and violet lines crowding toward 364.6 nm. Drops to n = 1 (Lyman) are ultraviolet; drops to n = 3 (Paschen) are infrared. Click a line to see its transition.</p>
+      <p class="note">Wavelengths from the Rydberg formula with hydrogen’s reduced-mass Rydberg constant, quoted in air like spectroscopy tables. Brightness is schematic.</p>`;
+  }
+  return `<div class="section-head"><h3>Emission spectrum</h3></div>
+    ${spectrumStrip(lines, state.spectrumPick)}${pickText}
+    <p class="explain">The bright lines of glowing ${el.name.toLowerCase()} vapor${el.symbol === 'Na' ? ': the famous yellow doublet at 589.0 and 589.6 nm is what makes sodium streetlights and the flame test yellow' : el.symbol === 'Ne' ? ': dozens of red and orange lines, which is why neon signs glow red-orange' : el.symbol === 'Hg' ? ': violet, blue and green lines that fluorescent tubes convert into white light' : ''}. Each line is an electron dropping between two energy levels; every element has its own pattern, which is how astronomers read the composition of stars.</p>
+    <p class="note">Strong visible lines of the neutral atom (NIST), in air. Brightness is approximate.</p>`;
 }
 
 function setHidden(ids, hidden) {
@@ -173,6 +251,10 @@ function subshellIds(key) {
 }
 
 $('#info').addEventListener('click', (e) => {
+  const rm = e.target.closest('#radial-mode button');
+  if (rm) { state.weighted = rm.dataset.value === 'all'; return renderInfo(); }
+  const sl = e.target.closest('.sline[data-line]');
+  if (sl) { state.spectrumPick = state.spectrumPick === +sl.dataset.line ? null : +sl.dataset.line; return renderInfo(); }
   const box = e.target.closest('.box[data-id]');
   if (box) return setHidden([box.dataset.id], !state.hidden.has(box.dataset.id));
 
@@ -199,6 +281,10 @@ $('#info').addEventListener('pointerover', (e) => {
   if (box) viewer.setHighlight(new Set([box.dataset.id]));
   else if (row) viewer.setHighlight(new Set(subshellIds(row.dataset.key)));
   else viewer.setHighlight(null);
+  const curve = e.target.closest('.radial-chart .curve');
+  const key = row?.dataset.key ?? curve?.dataset.key ?? null;
+  document.querySelectorAll('.radial-chart .curve').forEach((c) => c.classList.toggle('hover', c.dataset.key === key));
+  if (curve && !row) viewer.setHighlight(new Set(subshellIds(key)));
 });
 $('#info').addEventListener('pointerleave', () => viewer.setHighlight(null));
 
@@ -291,6 +377,10 @@ $('#app-mode').addEventListener('click', (e) => {
 
 buildTable();
 renderColorLegend('phase');
+$('#trend').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) applyTrend(b.dataset.value);
+});
 const hash = decodeURIComponent(location.hash.slice(1));
 const [elementPart, isotopeA] = (hash.startsWith('nuc=') ? hash.slice(4) : hash).split('-');
 const fromHash = ELEMENTS.find((el) => el.symbol.toLowerCase() === elementPart.toLowerCase());

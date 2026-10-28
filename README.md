@@ -269,6 +269,20 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - The **electron dots** hop between sampled positions. They show where an
   electron might be found, not a trajectory.
 
+- **Radial probability** plots r²R² for each occupied subshell (on a log-r axis,
+  as probability per ln r, past the second period). It shows radial nodes,
+  penetration, and why 3d sits inside 4s even though 4s fills first. Hover a
+  curve or a subshell to highlight it in 3D.
+- **Emission spectrum**: hydrogen's Balmer lines come from the Rydberg formula
+  (reduced-mass Rydberg constant, air wavelengths), with an energy-level
+  diagram of the Lyman, Balmer and Paschen series. Click a line to see its
+  transition. About 20 other elements show their strong visible lines from NIST
+  (the sodium doublet, neon's reds, mercury's blue and green).
+- **Color by** recolors the table by atomic radius (Cordero covalent radii),
+  first ionization energy (NIST), or Pauling electronegativity. The color range
+  spans the 5th to 95th percentile so helium doesn't wash out the rest. Hover an
+  element for its value.
+
 ## Controls
 
 - Drag to rotate, scroll to zoom, press **F** to refit the view.
@@ -290,6 +304,8 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - `js/vibrations.js`: valence force field, normal modes, IR intensities, measured reference frequencies
 - `js/nilsson.js`: Nilsson diagram, BCS filling, orbital wavefunctions and sampling, measured spins
 - `js/nuclide-chart.js`: chart of nuclides canvas (zoom, pan, pick)
+- `js/atom-data.js`: ionization energies, electronegativities, radii, emission lines
+- `js/atom-extras.js`: radial plots, spectrum strip, hydrogen level diagram, trend colors
 - `js/eht.js`: Extended Hückel molecular orbitals (STO-3G overlaps, Jacobi eigensolver)
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI

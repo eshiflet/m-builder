@@ -184,3 +184,12 @@ export function atomDensityTable(subshells, rMax = 14, steps = 1400) {
   }
   return { table, dr, rMax };
 }
+
+/** Radial probability P(r) = r²R(r)² per bohr, normalized to 1, at the radii `rs` (bohr). */
+export function radialProbability(n, l, zeff, rs) {
+  // Normalize over the whole function, which may extend past the radii asked for.
+  const far = ((4 * n + 40) * n) / (2 * zeff), m = 4000, h = far / m;
+  let norm = 0;
+  for (let i = 1; i <= m; i++) { const r = i * h; norm += r * r * radial(n, l, (2 * zeff * r) / n) ** 2 * h; }
+  return Float64Array.from(rs, (r) => (r * r * radial(n, l, (2 * zeff * r) / n) ** 2) / norm);
+}
