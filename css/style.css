@@ -375,6 +375,19 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .search-msg:empty { display: none; }
 #variants { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
 .note code { font-size: 11px; overflow-wrap: anywhere; color: var(--text); }
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper button {
+  width: 24px; height: 24px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel-2); cursor: pointer;
+}
+.stepper button:disabled { opacity: 0.35; cursor: not-allowed; }
+#nuc-iso { min-width: 44px; text-align: center; font-weight: 650; }
+.shape-chart { width: 100%; max-width: 260px; margin-top: 6px; }
+.shape-chart .curve { fill: none; stroke: var(--accent); stroke-width: 2; }
+.shape-chart .axis-zero { stroke: var(--line); stroke-width: 1; }
+.shape-chart .min { fill: #ffd75e; }
+.shape-chart .lbl { fill: var(--muted); font-size: 10px; }
+.chart-note { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
 .stage-empty {
   position: absolute;
   inset: 0;

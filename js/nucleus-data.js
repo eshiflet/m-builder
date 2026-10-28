@@ -2,6 +2,7 @@
 // energy, and the energies of its collective oscillations.
 
 import { ELEMENTS } from './elements.js';
+import { groundStateShape } from './nuclear-shape.js';
 
 // Mass number of the most abundant natural isotope, Z = 1–92. Elements with no
 // stable isotope use the longest-lived one (the bracketed mass in elements.js).
@@ -29,20 +30,77 @@ const LONG_LIVED = {
 };
 
 export const MAGIC = [2, 8, 20, 28, 50, 82, 126, 184];
+const nearestMagicDistance = (n) => Math.min(...MAGIC.map((m) => Math.abs(n - m)));
+export const valenceCounts = (Z, N) => ({ np: nearestMagicDistance(Z), nn: nearestMagicDistance(N) });
 
 export const R0 = 1.2; // fm; nuclear radius R = R0 · A^(1/3)
 const H_MEV_S = 4.135667696e-21; // Planck's constant in MeV·s
 
-export function isotopeFor(z) {
+// Halo nuclei: a compact core plus loosely bound nucleons far outside it.
+export const HALOS = {
+  '2,4': { core: 2, halo: 2, kind: 'n' }, // ⁶He
+  '2,6': { core: 2, halo: 4, kind: 'n' }, // ⁸He
+  '3,8': { core: 6, halo: 2, kind: 'n' }, // ¹¹Li = ⁹Li + 2n
+  '4,7': { core: 6, halo: 1, kind: 'n' }, // ¹¹Be = ¹⁰Be + n
+  '4,10': { core: 8, halo: 2, kind: 'n' }, // ¹⁴Be
+  '5,12': { core: 10, halo: 2, kind: 'n' }, // ¹⁷B
+  '6,13': { core: 12, halo: 1, kind: 'n' }, // ¹⁹C
+  '6,16': { core: 14, halo: 2, kind: 'n' }, // ²²C
+  '5,3': { core: 4, halo: 1, kind: 'p' }, // ⁸B = ⁷Be + p (proton halo)
+};
+
+// Light isotopes that exist even though the mass formula (poor for small A) says otherwise.
+const KNOWN_LIGHT = {
+  1: [0, 1, 2], 2: [1, 2, 4, 6], 3: [3, 4, 5, 6, 8], 4: [3, 5, 6, 7, 10], 5: [3, 5, 6, 7, 12],
+  6: [5, 6, 7, 8, 13, 16], 7: [6, 7, 8], 8: [7, 8, 9, 10],
+};
+
+/** Neutron counts with a bound nucleus for element Z (mass formula, plus known light ones). */
+export function allowedNeutrons(z) {
+  const out = new Set(KNOWN_LIGHT[z] ?? []);
+  const def = defaultA(z) - z;
+  out.add(def);
+  if (z > 8) {
+    for (let n = Math.max(1, Math.floor(z * 0.8)); n <= Math.ceil(z * 1.9) + 10; n++) {
+      const sn = bindingEnergy(z, z + n).B - bindingEnergy(z, z + n - 1).B;
+      const sp = bindingEnergy(z, z + n).B - bindingEnergy(z - 1, z + n - 1).B;
+      if (sn > 0 && sp > 0) out.add(n);
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+function defaultA(z) {
   const el = ELEMENTS[z - 1];
-  const A = z <= 92 ? MOST_ABUNDANT_A[z - 1] : parseInt(el.mass.replace(/[[\]]/g, ''), 10);
-  const N = A - z;
+  return z <= 92 ? MOST_ABUNDANT_A[z - 1] : parseInt(el.mass.replace(/[[\]]/g, ''), 10);
+}
+
+/** The element's most common (or longest-lived) isotope, or a chosen neutron count. */
+export function isotopeFor(z, n = null) {
+  const el = ELEMENTS[z - 1];
+  const A0 = defaultA(z);
+  const N = n ?? A0 - z;
+  const A = z + N;
+  const halo = HALOS[`${z},${N}`] ?? null;
   let stability;
-  if (z > 92) stability = 'synthetic and radioactive (longest-lived isotope shown)';
+  if (A !== A0) stability = halo ? `a ${halo.kind === 'n' ? 'neutron' : 'proton'}-halo nucleus (short-lived, made in accelerators)` : 'a less common or unstable isotope';
+  else if (z > 92) stability = 'synthetic and radioactive (longest-lived isotope shown)';
   else if (LONG_LIVED[z]) stability = LONG_LIVED[z];
   else if (z === 43 || z === 61 || z >= 84) stability = 'radioactive; this element has no stable isotopes (longest-lived shown)';
   else stability = 'stable';
-  return { Z: z, N, A, symbol: el.symbol, name: el.name, stability };
+  return { Z: z, N, A, symbol: el.symbol, name: el.name, stability, halo, isDefault: A === A0 };
+}
+
+/**
+ * Half-density radii (fm) of the proton and neutron distributions, Woods–Saxon
+ * diffuseness 0.55 fm. Extra neutrons extend a little farther (the neutron skin):
+ * r_n − r_p ≈ 0.9·(N − Z)/A − 0.03 fm (Trzcińska et al. 2001).
+ */
+export function densityRadii(Z, N) {
+  const A = Z + N;
+  const Rp = Math.max(0.8, 1.12 * Math.cbrt(A) - 0.86 / Math.cbrt(A));
+  const skin = Math.max(0, 0.9 * ((N - Z) / A) - 0.03);
+  return { Rp, Rn: Rp + skin * 1.3, a: 0.55, skin }; // half-density shift ≈ 1.3 × rms difference
 }
 
 /**
@@ -61,21 +119,36 @@ export function bindingEnergy(Z, A) {
   return { B, perNucleon: A > 1 ? B / A : 0, volume, surface, coulomb, asymmetry, pairing };
 }
 
-const nearestMagicDistance = (n) => Math.min(...MAGIC.map((m) => Math.abs(n - m)));
+// Light nuclei where the shell calculation misses alpha clustering: measured intrinsic deformations.
+const LIGHT_SHAPES = { '10,10': 0.45, '12,12': 0.45, '4,4': 0.6, '6,6': -0.4 };
 
 /**
- * Quadrupole deformation β₂, estimated from the valence proton and neutron counts
- * (distances to the nearest magic numbers) through Casten's P-factor, P = NpNn/(Np+Nn).
- * Nuclei near closed shells are round; mid-shell nuclei (rare earths, actinides) are
- * prolate, with β₂ ≈ 0.3.
+ * Ground-state quadrupole deformation β₂ (negative = oblate) from the
+ * Nilsson–Strutinsky calculation in nuclear-shape.js, with the energy-vs-shape curve.
+ * `depth` is how much energy deforming saves: large → rigid, small → soft.
  */
 export function deformation(Z, N) {
-  const np = nearestMagicDistance(Z), nn = nearestMagicDistance(N);
-  const P = np + nn ? (np * nn) / (np + nn) : 0;
-  return { beta: Math.min(0.3, 0.065 * P), np, nn, P };
+  const A = Z + N;
+  if (A < 8) {
+    const m = LIGHT_SHAPES[`${Z},${N}`];
+    return { beta: m ?? 0, curve: null, depth: 0, source: m != null ? 'measured' : 'too light for a meaningful shape' };
+  }
+  const calc = groundStateShape(Z, N);
+  const measured = LIGHT_SHAPES[`${Z},${N}`];
+  if (measured != null) return { ...calc, beta: measured, source: 'measured' };
+  return { ...calc, source: A < 40 ? 'calculated (rough for light nuclei)' : 'calculated' };
 }
 
 const period = (E) => H_MEV_S / E;
+
+export const HBAR_MEV_S = 6.582119569e-22;
+export const BABYSECOND = 1e-23; // s; light crosses 3 fm in one babysecond
+
+/**
+ * Rotation period of a deformed nucleus at spin J: for a rigid rotor with
+ * E(J) = E(2⁺)·J(J+1)/6, the angular frequency is ω = dE/dJ / ħ = (2J+1)·E(2⁺)/(6ħ).
+ */
+export const rotationPeriod = (E2, J) => (2 * Math.PI * 6 * HBAR_MEV_S) / ((2 * J + 1) * E2);
 
 /** Collective oscillations: energy (MeV) and period (s). */
 export function collectiveModes(Z, A, beta) {
@@ -83,7 +156,7 @@ export function collectiveModes(Z, A, beta) {
   const monopole = 80 * A ** (-1 / 3);
   const quadrupole = 63 * A ** (-1 / 3);
   // Lowest rotational state of a deformed nucleus (Grodzins): E(2⁺) ≈ 1225 / (A^(7/3) β²) MeV.
-  const rotation = beta >= 0.1 ? 1225 / (A ** (7 / 3) * beta * beta) : null;
+  const rotation = Math.abs(beta) >= 0.1 ? 1225 / (A ** (7 / 3) * beta * beta) : null;
   const out = {
     dipole: { E: dipole, T: period(dipole) },
     breathing: { E: monopole, T: period(monopole) },

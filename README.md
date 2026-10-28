@@ -93,31 +93,61 @@ with `#smiles=CCO`.
 
 Switch to **Nucleus** and pick an element. The electrons are left behind, and
 the view zooms into the nucleus of the element's most common isotope (or
-longest-lived, for radioactive elements). Red spheres are protons and gray-blue
-ones are neutrons. Link with `#nuc=U`.
+longest-lived, for radioactive elements). Use the **Isotope** stepper for other
+isotopes, including halo nuclei like ¹¹Li. Cream spheres are protons, blue ones
+are neutrons, and cyan ones are halo nucleons. Link with `#nuc=U` or
+`#nuc=Li-11`.
 
-- **Size and shape:** radius R = 1.2·A^⅓ fm. Nuclei near the magic numbers
-  (2, 8, 20, 28, 50, 82, 126) are round. Mid-shell ones (rare earths, actinides)
-  are egg-shaped, with the deformation β₂ estimated from the valence proton and
-  neutron counts (Casten's P-factor).
-- **Binding energy** uses the semi-empirical mass formula (volume, surface,
-  Coulomb, asymmetry and pairing terms).
-- **Oscillations**, with each element's energy and period:
-  - Dipole (giant dipole resonance, protons against neutrons):
-    31.2A^-⅓ + 20.6A^-⅙ MeV (Berman–Fultz)
-  - Breathing (monopole): 80A^-⅓ MeV
-  - Quadrupole (surface): 63A^-⅓ MeV
-  - Rotation, for deformed nuclei: E(2⁺) ≈ 1225/(A^7/3·β²) MeV (Grodzins)
+**Time** runs in babyseconds (1 bs = 10⁻²³ s, the time light takes to cross
+3 fm). A photon on the femtometer ruler moves at light speed for comparison.
+Choosing a motion sets a time rate that makes it visible.
 
-  Periods are about 10⁻²² s, so the animation is slowed by about 10²¹ and the
-  amplitudes are exaggerated.
-- **Nucleon motion:** the nucleons jostle and migrate inside the nuclear surface
-  (soft-sphere dynamics standing in for their Fermi motion).
-- **Quarks:** shows three quarks inside every nucleon, with gluon lines and
-  color charges that keep swapping. **Inside a proton / neutron** zooms into
-  one nucleon: valence quarks (uud or udd) with their charges, wiggling gluon flux
-  tubes, and flickering sea quark pairs. It also explains that the quarks' own
-  masses are only about 1% of the nucleon's mass.
+**Nucleon motion** is a small simulation in physical units. Each nucleon is a
+classical particle in a deformed Woods–Saxon mean field (separate proton and
+neutron wells, so a neutron skin emerges), with the short-range part of the
+Volkov nucleon–nucleon force (repulsive core, weak attraction). A Langevin
+thermostat holds the speeds at Fermi-motion values (rms ≈ 0.22c). The panel
+measures the live rms speed, the proton and neutron radii, and the neutron skin
+(≈ 0.17 fm in ²⁰⁸Pb and ¹⁸⁰Hf). In halo nuclei the outer nucleons sit in a
+shallow, wide well and are kept out of the filled core (Pauli exclusion).
+
+**Ground-state shape** comes from the Nilsson–Strutinsky
+(macroscopic–microscopic) method in `js/nuclear-shape.js`:
+
+```
+E(β) = E_liquid-drop(β) + δE_shell(β) + δE_pairing(β)
+```
+
+- **Liquid drop:** deforming costs surface energy and gains Coulomb energy.
+- **Shell correction:** Nilsson single-particle levels (deformed oscillator
+  with l·s and l² terms, κ/μ from Bengtsson & Ragnarsson), minus their
+  Strutinsky-smoothed average.
+- **Pairing:** a BCS correction, minus its smooth average.
+
+The minimum gives β₂: for example Dy-164 0.29, Hf-176 0.26, U-238 0.24, and
+Pt-195 oblate at −0.13. Pb-208, Sn-120 and Ca-40 come out spherical. The panel
+plots the energy-vs-shape curve and says whether the nucleus is rigid or soft.
+Very light nuclei (A < 40) are less reliable, so a couple use measured values.
+
+**Oscillations** drive the mean field, and the nucleons follow:
+
+- Dipole: the proton and neutron wells slosh against each other.
+  31.2A^-⅓ + 20.6A^-⅙ MeV (Berman–Fultz).
+- Breathing: 80A^-⅓ MeV.
+- Quadrupole: 63A^-⅓ MeV.
+- Rotation of deformed nuclei: E(2⁺) from the Grodzins relation, with the turn
+  period at spin J from a rigid rotor, ω = (2J+1)E(2⁺)/6ħ. It is simulated in the
+  rotating frame, so the nucleons move in lockstep.
+
+Amplitudes are exaggerated so they can be seen.
+
+**Quarks** shows three quarks inside every nucleon, with gluon lines and color
+charges that keep swapping. **Inside a proton / neutron** zooms into one
+nucleon: valence quarks (uud or udd) with their charges, wiggling gluon flux
+tubes, and flickering sea quark pairs. It also explains that the quarks' own
+masses are only about 1% of the nucleon's mass.
+
+Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9JLGs2Yc).
 
 ## What you're looking at
 
@@ -153,7 +183,8 @@ ones are neutrons. Link with `#nuc=U`.
 - `js/conformer-worker.js`: runs the conformer search off the main thread
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI
-- `js/nucleus-data.js`: isotopes, mass formula, deformation, and collective mode energies
-- `js/nucleus-viewer.js`: three.js nucleus and nucleon scenes
+- `js/nucleus-data.js`: isotopes, radii and neutron skins, halos, mass formula, and collective mode energies
+- `js/nuclear-shape.js`: Nilsson–Strutinsky ground-state deformation (liquid drop + shell + pairing)
+- `js/nucleus-viewer.js`: nucleon dynamics (mean field, NN force, thermostat) and the three.js nucleus and nucleon scenes
 - `js/nucleus-ui.js`: Nucleus mode controls and info
 - `js/main.js`: UI wiring and mode switching

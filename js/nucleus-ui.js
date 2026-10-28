@@ -1,20 +1,19 @@
 import { ELEMENTS } from './elements.js';
 import { COVALENT_RADIUS } from './molecule-data.js';
 import {
-  isotopeFor, bindingEnergy, deformation, collectiveModes, radiusFm, isMagic, sci,
-  NUCLEONS, QUARKS,
+  isotopeFor, bindingEnergy, deformation, collectiveModes, radiusFm, isMagic, sci, densityRadii,
+  allowedNeutrons, rotationPeriod, valenceCounts, BABYSECOND, NUCLEONS, QUARKS,
 } from './nucleus-data.js';
-import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, COLOR_CHARGES } from './nucleus-viewer.js';
+import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, COLOR_CHARGES } from './nucleus-viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
-const DISPLAY_PERIOD = 1.8;
 
 const MODE_TEXT = {
-  dipole: 'Giant dipole resonance: all the protons slosh back and forth against all the neutrons, like two fluids passing through each other. It’s what happens when a nucleus absorbs a high-energy gamma ray.',
-  breathing: 'Breathing (giant monopole) mode: the whole nucleus swells and shrinks. How much energy this takes measures how hard nuclear matter is to compress.',
-  quadrupole: 'Quadrupole mode: the surface stretches into an egg shape along one axis and then flattens, like a vibrating liquid drop.',
-  rotation: 'Rotation: a deformed (egg-shaped) nucleus can spin as a whole. Round nuclei can’t rotate in a way that changes anything, so this only appears for deformed ones.',
-  none: 'No collective oscillation: just the individual nucleons jostling.',
+  dipole: 'Giant dipole resonance: the proton and neutron wells slosh against each other, and the nucleons follow. It’s what happens when a nucleus absorbs a high-energy gamma ray.',
+  breathing: 'Breathing (giant monopole) mode: the well swells and shrinks, and the nucleons crowd in and spread out with it. Its energy measures how hard nuclear matter is to compress.',
+  quadrupole: 'Quadrupole mode: the surface stretches into an egg shape and then flattens, like a vibrating liquid drop.',
+  rotation: 'Rotation: a deformed nucleus turns as a whole about an axis perpendicular to its long axis, with the nucleons carried along in lockstep. (A round nucleus has no orientation, so it can’t rotate in a measurable way.)',
+  none: 'No collective oscillation: just the nucleons moving around inside the nucleus.',
 };
 
 /** A rough atomic radius in fm: the covalent radius where known, else 1.5 Å. */
@@ -26,47 +25,116 @@ const about = (x) => {
   return (Math.round(x / p) * p).toLocaleString();
 };
 
+const energyText = (E) => (E < 1 ? `${(E * 1000).toFixed(0)} keV` : `${E.toFixed(1)} MeV`);
+const bsText = (T) => {
+  const bs = T / BABYSECOND;
+  return `${bs < 100 ? bs.toFixed(0) : about(bs)} babyseconds`;
+};
 const isoLabel = (iso) => `<sup>${iso.A}</sup>${iso.symbol}`;
+
+// Time-rate slider: 0–100 ↦ 0.5 to 2000 babyseconds per real second (log scale).
+const rateFromSlider = (v) => 0.5 * 4000 ** (v / 100);
+const sliderFromRate = (r) => Math.max(0, Math.min(100, (100 * Math.log(r / 0.5)) / Math.log(4000)));
+
+/** Energy-vs-deformation chart from the shape calculation, as inline SVG. */
+function shapeChart(shape) {
+  if (!shape.curve) return '';
+  const W = 260, H = 110, pad = 22;
+  const xs = shape.curve.map((c) => c.beta), ys = shape.curve.map((c) => c.E);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys, -1), y1 = Math.max(Math.min(Math.max(...ys), 12), 2);
+  const X = (b) => pad + ((b - x0) / (x1 - x0)) * (W - pad - 6);
+  const Y = (e) => 6 + ((y1 - Math.min(e, y1)) / (y1 - y0)) * (H - pad - 6);
+  const path = shape.curve.map((c, i) => `${i ? 'L' : 'M'}${X(c.beta).toFixed(1)},${Y(c.E).toFixed(1)}`).join('');
+  const min = shape.curve.reduce((b, c) => (c.E < b.E ? c : b));
+  return `<svg class="shape-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Energy versus deformation">
+    <line x1="${X(0)}" y1="6" x2="${X(0)}" y2="${H - pad}" class="axis-zero"/>
+    <line x1="${pad}" y1="${Y(0)}" x2="${W - 6}" y2="${Y(0)}" class="axis-zero"/>
+    <path d="${path}" class="curve"/>
+    <circle cx="${X(min.beta)}" cy="${Y(min.E)}" r="4" class="min"/>
+    <text x="${pad}" y="${H - 6}" class="lbl">oblate</text>
+    <text x="${X(0)}" y="${H - 6}" class="lbl" text-anchor="middle">round</text>
+    <text x="${W - 6}" y="${H - 6}" class="lbl" text-anchor="end">prolate</text>
+    <text x="4" y="12" class="lbl">E</text>
+  </svg>`;
+}
 
 export function createNucleusUI() {
   const viewer = new NucleusViewer($('#nuc-canvas'));
-  let iso = null, modes = null, shape = null;
-  let mode = 'dipole';
-  let preferred = 'dipole'; // what the user picked; used again once a nucleus supports it
-  let view = 'nucleus';
+  let z = 6, neutrons = null;
+  let iso = null, modes = null, shape = null, radii = null;
+  let mode = 'none', preferred = 'none', view = 'nucleus';
+  let spin = 10;
+  let stats = null;
 
-  viewer.onScaleChange = (fm) => { $('#nuc-scale').textContent = `view width ≈ ${fm < 10 ? fm.toFixed(1) : fm.toFixed(0)} fm (10⁻¹⁵ m)`; };
+  viewer.onScaleChange = (fm) => { $('#nuc-scale').textContent = `view width ≈ ${fm < 10 ? fm.toFixed(1) : fm.toFixed(0)} fm`; };
+  viewer.onClock = (t, lagging) => {
+    $('#nuc-clock').textContent = `t = ${t < 1000 ? t.toFixed(1) : about(t)} babyseconds (${sci(t * BABYSECOND)} s)${lagging ? ' · nucleon motion slowed to keep up' : ''}`;
+  };
+  viewer.onStats = (s) => { stats = s; renderStats(); };
 
-  function setElement(z) {
-    iso = isotopeFor(z);
+  /** Show element z, optionally a specific isotope by mass number. */
+  function setElement(zNew, A = null) {
+    z = zNew;
+    neutrons = A && allowedNeutrons(z).includes(A - z) ? A - z : null;
+    load();
+  }
+
+  function load() {
+    iso = isotopeFor(z, neutrons);
     shape = deformation(iso.Z, iso.N);
     modes = collectiveModes(iso.Z, iso.A, shape.beta);
-    viewer.setNucleus(iso, shape.beta);
-    // Use the chosen mode if this nucleus has it; otherwise fall back.
-    if (preferred === 'none' || modes[preferred]) setMode(preferred);
-    else setMode(modes.dipole ? 'dipole' : modes.rotation ? 'rotation' : 'none');
+    // Halo nuclei: the wells describe the compact core; halo nucleons get their own wide well.
+    radii = iso.halo ? densityRadii(iso.Z - (iso.halo.kind === 'p' ? iso.halo.halo : 0), iso.halo.core) : densityRadii(iso.Z, iso.N);
+    viewer.setNucleus(iso, shape.beta, radii, periods(), modes.rotation?.E ?? null);
+    stats = null;
+    if (preferred === 'none' || (modes[preferred] && (preferred !== 'rotation' || modes.rotation))) setMode(preferred);
+    else setMode('none');
+    autoRate();
+    history.replaceState(null, '', `#nuc=${iso.symbol}${iso.isDefault ? '' : `-${iso.A}`}`);
     render();
+  }
+
+  function periods() {
+    const p = {};
+    for (const k of ['dipole', 'breathing', 'quadrupole']) if (modes[k]) p[k] = modes[k].T / BABYSECOND;
+    if (modes.rotation) p.rotation = rotationPeriod(modes.rotation.E, spin) / BABYSECOND;
+    return p;
   }
 
   function setMode(m) {
     mode = m;
     viewer.setMode(m);
     document.querySelectorAll('#nuc-mode button').forEach((b) => b.classList.toggle('on', b.dataset.value === m));
+    $('#nuc-spin-wrap').hidden = m !== 'rotation' || view !== 'nucleus';
+  }
+
+  function renderStats() {
+    const el = $('#nuc-live');
+    if (!el || !stats || view !== 'nucleus') return;
+    const skin = stats.rn - stats.rp;
+    el.innerHTML = `<li>Nucleon speed (rms): <b>${stats.v.toFixed(2)}c</b></li>
+      ${iso.Z && iso.N && !iso.halo ? `<li>Proton radius (rms): ${stats.rp.toFixed(2)} fm</li><li>Neutron radius (rms): ${stats.rn.toFixed(2)} fm</li>
+      <li>Neutron skin: <b>${skin >= 0 ? '+' : ''}${skin.toFixed(2)} fm</b> <span class="muted">(input ${radii.skin.toFixed(2)})</span></li>` : ''}`;
   }
 
   function render() {
-    // Mode buttons only for modes this nucleus has.
     document.querySelectorAll('#nuc-mode button').forEach((b) => {
       const m = b.dataset.value;
       b.disabled = m !== 'none' && !modes[m];
-      b.title = m === 'none' ? '' : modes[m] ? `${modes[m].E < 1 ? `${(modes[m].E * 1000).toFixed(0)} keV` : `${modes[m].E.toFixed(1)} MeV`} · period ${sci(modes[m].T)} s`
+      b.title = m === 'none' ? '' : modes[m] ? `${energyText(modes[m].E)} · ${m === 'rotation' ? 'see spin' : bsText(modes[m].T)}`
         : m === 'rotation' ? 'Only deformed nuclei rotate' : 'Needs at least 4 nucleons';
     });
-    $('#nuc-mode-wrap').hidden = view !== 'nucleus';
-    $('#nuc-quarks-wrap').hidden = view !== 'nucleus';
-    $('#nuc-motion-wrap').hidden = view !== 'nucleus';
+    for (const id of ['nuc-mode-wrap', 'nuc-quarks-wrap', 'nuc-motion-wrap', 'nuc-iso-wrap', 'nuc-rate-wrap', 'nuc-extra-wrap']) $(`#${id}`).hidden = view !== 'nucleus';
+    $('#nuc-spin-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
+    $('#nuc-clock').hidden = view !== 'nucleus';
+    const ns = allowedNeutrons(iso.Z);
+    $('#nuc-iso').innerHTML = isoLabel(iso);
+    $('#nuc-iso-down').disabled = !ns.some((n) => n < iso.N);
+    $('#nuc-iso-up').disabled = !ns.some((n) => n > iso.N);
     $('#nuc-legend').innerHTML = view === 'nucleus'
       ? `<span><i style="background:${PROTON_COLOR}"></i>proton</span><span><i style="background:${NEUTRON_COLOR}"></i>neutron</span>${
+        iso.halo ? `<span><i style="background:${HALO_COLOR}"></i>halo ${iso.halo.kind === 'n' ? 'neutron' : 'proton'}</span>` : ''}${
         viewer.showQuarks ? COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]} quark</span>`).join('') : ''}`
       : `${COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]}</span>`).join('')}<span><i style="background:#ffe9a8"></i>gluon</span><span><i style="background:#9ef0ff"></i>sea quark pair</span>`;
 
@@ -76,24 +144,32 @@ export function createNucleusUI() {
     const R = radiusFm(iso.A);
     const ratio = atomRadiusFm(iso.Z) / R;
     const B = bindingEnergy(iso.Z, iso.A);
-    const roundness = iso.A === 1 ? 'A single proton'
-      : shape.beta < 0.02 ? 'Spherical'
-      : shape.beta < 0.1 ? `Nearly spherical (β₂ ≈ ${shape.beta.toFixed(2)})`
-        : `Prolate (egg-shaped), β₂ ≈ ${shape.beta.toFixed(2)}`;
+    const b = shape.beta;
+    const kind = Math.abs(b) < 0.05 ? 'Spherical' : `${b > 0 ? 'Prolate (cigar-shaped)' : 'Oblate (flattened)'}, β₂ = ${b.toFixed(2)}`;
+    // R(θ) = R₀(1 + β·Y₂₀): Y₂₀ is +0.631 along the symmetry axis and −0.315 at the equator.
+    const ab = Math.abs(b);
+    const ratioAxes = b > 0 ? (1 + 0.6308 * ab) / (1 - 0.3154 * ab) : (1 + 0.3154 * ab) / (1 - 0.6308 * ab);
+    const axisRatio = ab >= 0.05 ? ` · long/short axis ≈ ${ratioAxes.toFixed(2)}` : '';
+    const stiffness = !shape.curve ? '' : shape.depth > 2 ? `Deforming saves ${shape.depth.toFixed(1)} MeV, so the shape is rigid.`
+      : Math.abs(b) >= 0.05 ? `Deforming saves only ${shape.depth.toFixed(1)} MeV: a soft nucleus whose shape fluctuates.` : 'The energy is lowest when round.';
+    const { np, nn } = valenceCounts(iso.Z, iso.N);
     const magic = [isMagic(iso.Z) && `${iso.Z} protons`, isMagic(iso.N) && `${iso.N} neutrons`].filter(Boolean);
-    const magicText = iso.A === 1 ? 'Hydrogen’s nucleus is just one proton, with no neutrons.'
-      : magic.length
-      ? `${magic.join(' and ')} ${magic.length > 1 ? 'are both magic numbers (doubly magic)' : 'is a magic number'}: a closed nuclear shell, which makes the nucleus round and extra stable.`
-      : `${shape.np} protons and ${shape.nn} neutrons away from the nearest closed shells (magic numbers 2, 8, 20, 28, 50, 82, 126). Nuclei midway between shells tend to deform.`;
+    const magicText = iso.A === 1 ? 'Hydrogen’s nucleus is just one proton.'
+      : magic.length ? `${magic.join(' and ')} ${magic.length > 1 ? 'are both magic numbers (doubly magic)' : 'is a magic number'}: a closed shell, which makes the nucleus round and extra stable.`
+        : `${np} proton${np === 1 ? '' : 's'} and ${nn} neutron${nn === 1 ? '' : 's'} from the nearest closed shells. Mid-shell nuclei tend to deform.`;
 
     const m = modes[mode];
-    const slow = m ? m.T / DISPLAY_PERIOD : null;
+    const T = mode === 'rotation' && modes.rotation ? rotationPeriod(modes.rotation.E, spin) : m?.T;
     const modeLine = m
-      ? `<p class="explain">${MODE_TEXT[mode]} For ${isoLabel(iso)}: <b>${m.E < 1 ? `${(m.E * 1000).toFixed(0)} keV` : `${m.E.toFixed(1)} MeV`}</b>, one cycle every <b>${sci(m.T)} s</b> (${sci(1 / m.T)} times per second). The animation is slowed down about ${sci(1 / slow, 1)} times, and the motion is exaggerated so you can see it.</p>`
+      ? `<p class="explain">${MODE_TEXT[mode]} For ${isoLabel(iso)}: ${mode === 'rotation' ? `E(2⁺) = <b>${energyText(m.E)}</b>; at spin ${spin}ħ one turn takes` : `<b>${energyText(m.E)}</b>, one cycle every`} <b>${bsText(T)}</b> (${sci(T)} s). Amplitudes are exaggerated so you can see them.</p>`
       : `<p class="explain">${MODE_TEXT.none}</p>`;
 
-    const modeRows = Object.entries({ dipole: 'Dipole (p vs n)', breathing: 'Breathing', quadrupole: 'Quadrupole', rotation: 'Rotation (2⁺)' })
-      .map(([k, label]) => `<li>${label}: ${modes[k] ? `${modes[k].E < 1 ? `${(modes[k].E * 1000).toFixed(0)} keV` : `${modes[k].E.toFixed(1)} MeV`} <span class="muted">· ${sci(modes[k].T)} s</span>` : `<span class="muted">${k === 'rotation' ? 'not deformed' : '—'}</span>`}</li>`).join('');
+    const modeRows = Object.entries({ dipole: 'Dipole (p vs n)', breathing: 'Breathing', quadrupole: 'Quadrupole' })
+      .map(([k, label]) => `<li>${label}: ${modes[k] ? `${energyText(modes[k].E)} <span class="muted">· ${bsText(modes[k].T)}</span>` : '<span class="muted">—</span>'}</li>`).join('')
+      + `<li>Rotation: ${modes.rotation ? `E(2⁺) ${energyText(modes.rotation.E)} <span class="muted">· ${bsText(rotationPeriod(modes.rotation.E, spin))} per turn at spin ${spin}</span>` : '<span class="muted">not deformed</span>'}</li>`;
+
+    const haloText = iso.halo
+      ? `<p class="explain"><b>Halo nucleus.</b> ${iso.A}${iso.symbol} is a compact core with ${iso.halo.halo} loosely bound ${iso.halo.kind === 'n' ? 'neutron' : 'proton'}${iso.halo.halo > 1 ? 's' : ''} roaming far outside it, in a shallow, wide well. That makes it far larger than its mass suggests: ¹¹Li is about as big as ²⁰⁸Pb.</p>` : '';
 
     $('#nuc-title').innerHTML = `<span><strong>${el.name}-${iso.A}</strong> <span class="muted">${isoLabel(iso)}</span><br><span class="muted">${iso.Z} p · ${iso.N} n</span></span>`;
     $('#nuc-info').innerHTML = `
@@ -104,55 +180,69 @@ export function createNucleusUI() {
         </div>
       </div>
       ${modeLine}
-      <p class="explain">The electrons are left behind: the atom’s electron cloud is roughly <b>${about(ratio)} times wider</b> than this nucleus. If the nucleus were a 1 cm marble, the atom would be about ${about(ratio / 100)} m across, with almost all of its mass in the marble.</p>
+      ${haloText}
+      <p class="explain">The nucleons move on their own: confined to a few femtometers, they travel at about a fifth to a third of the speed of light, crossing this nucleus in roughly ${Math.max(1, Math.round((2 * R) / (0.25 * 3))).toLocaleString()} babyseconds (1 babysecond = 10⁻²³ s, the time light takes to cross 3 fm). The ruler’s photon moves at light speed for comparison.</p>
       <div class="facts">
-        <div><h3>Size &amp; shape</h3><ul>
-          <li>Radius ≈ ${R.toFixed(2)} fm <span class="muted">(1.2·A<sup>⅓</sup>)</span></li>
-          <li>${roundness}</li>
+        <div><h3>Shape</h3><ul>
+          <li>${iso.A < 5 ? 'Too few nucleons for a meaningful shape' : kind}${axisRatio}</li>
+          ${shape.curve ? `<li class="muted">${stiffness}</li>` : ''}
           <li class="muted">${magicText}</li>
+        </ul>${shapeChart(shape)}${shape.curve ? `<p class="chart-note">Energy vs. deformation (${shape.source}); dot = ground state.</p>` : ''}</div>
+        <div><h3>Live from the simulation</h3><ul id="nuc-live"><li class="muted">measuring…</li></ul>
+          <h3 style="margin-top:10px">Size</h3><ul>
+          <li>R ≈ ${R.toFixed(2)} fm <span class="muted">(1.2·A<sup>⅓</sup>)</span></li>
+          <li class="muted">The atom is roughly ${about(ratio)}× wider. If the nucleus were a 1 cm marble, the atom would be about ${about(ratio / 100)} m across.</li>
         </ul></div>
-        <div><h3>Binding energy</h3><ul>
-          <li>${B.B.toFixed(0)} MeV total · <b>${B.perNucleon.toFixed(2)} MeV</b> per nucleon</li>
-          <li class="muted">volume +${B.volume.toFixed(0)}, surface −${B.surface.toFixed(0)}, Coulomb −${B.coulomb.toFixed(0)}, asymmetry −${B.asymmetry.toFixed(0)}, pairing ${B.pairing >= 0 ? '+' : '−'}${Math.abs(B.pairing).toFixed(1)} MeV</li>
-          ${iso.A < 12 ? '<li class="muted">The mass formula is rough for very light nuclei.</li>' : ''}
+        <div><h3>Oscillations</h3><ul>${modeRows}</ul>
+          <h3 style="margin-top:10px">Binding energy</h3><ul>
+          <li>${B.B.toFixed(0)} MeV · <b>${B.perNucleon.toFixed(2)} MeV</b>/nucleon</li>
+          ${iso.A < 12 ? '<li class="muted">(mass formula is rough for light nuclei)</li>' : ''}
         </ul></div>
-        <div><h3>Oscillations</h3><ul>${modeRows}</ul></div>
       </div>
-      <p class="note">Nucleons don’t sit still: confined to a few femtometers, they move at roughly a quarter of the speed of light (the Fermi motion), shown here as jostling. Protons are colored red and neutrons gray-blue; inside, each is three quarks bound by gluons (turn on <b>Quarks</b>, or look inside a proton). Energies use standard systematics: semi-empirical mass formula, Berman–Fultz dipole energies, and E(2⁺) from the Grodzins relation; the shape is estimated from valence nucleon numbers.</p>`;
+      <p class="note">How it’s modeled: each nucleon is a classical particle in a Woods–Saxon mean field (separate proton and neutron wells, with a neutron skin), feeling the short-range part of the Volkov nucleon–nucleon force (a repulsive core and weak attraction), plus a Langevin thermostat (random kicks and drag) that keeps their speeds at Fermi-motion values. Oscillations move the wells; the nucleons follow. The ground-state shape is computed with the Nilsson–Strutinsky method (liquid drop + shell + pairing corrections). Real nucleons are quantum waves, so this is a picture of the motion, not a full quantum calculation.</p>`;
+    renderStats();
   }
 
-  function renderNucleon() {
-    const kind = view;
-    const info = NUCLEONS[kind];
-    const quarkMass = info.quarks.reduce((s, q) => s + QUARKS[q].mass, 0);
-    const pct = (100 * quarkMass) / info.mass;
-    const chargeSum = info.quarks.map((q) => QUARKS[q].charge).join(' ');
-    const name = kind[0].toUpperCase() + kind.slice(1);
-    $('#nuc-title').innerHTML = `<span><strong>Inside a ${kind}</strong><br><span class="muted">${info.quarks.join('')} · charge ${info.charge}</span></span>`;
-    $('#nuc-info').innerHTML = `
-      <div class="info-head"><div>
-        <h2>${name} <span class="muted">· ${info.quarks.join('')}</span></h2>
-        <div class="muted">${info.mass.toFixed(3)} MeV/c² · radius ≈ ${info.radius} fm · charge ${info.charge}</div>
-      </div></div>
-      <p class="explain">A ${kind} is two ${info.quarks[0] === info.quarks[1] ? 'up' : ''}${kind === 'neutron' ? 'down quarks and one up' : ' quarks and one down'} quark: charges ${chargeSum} add up to ${info.charge}. Each quark carries a “color” charge (red, green or blue, unrelated to real color). Gluons constantly carry color between the quarks, which is why the colors keep swapping, but the three together always stay colorless.</p>
-      <p class="explain">The quarks’ own masses add up to only about ${quarkMass.toFixed(1)} MeV/c², ${pct.toFixed(1)}% of the ${kind}’s ${info.mass.toFixed(1)} MeV/c². The other ${(100 - pct).toFixed(0)}% is the energy of the gluon field and the quarks’ motion (E = mc²). Most of the mass of everything around you comes from this.</p>
-      <div class="facts">
-        <div><h3>Valence quarks</h3><ul>${info.quarks.map((q) => `<li>${QUARKS[q].name} (${q}) <span class="muted">· charge ${QUARKS[q].charge} · ${QUARKS[q].mass} MeV/c²</span></li>`).join('')}</ul></div>
-        <div><h3>Also inside</h3><ul>
-          <li>Gluons <span class="muted">· carriers of the strong force, massless</span></li>
-          <li>Sea quarks <span class="muted">· quark–antiquark pairs that flicker in and out of existence</span></li>
-        </ul></div>
-      </div>
-      <p class="note">Quarks are never found alone (confinement): pulling one out stretches the gluon field until it has enough energy to create a new quark–antiquark pair. The picture is schematic; quarks aren’t little balls with sharp positions.</p>`;
-  }
+    function renderNucleon() {
+      const kind = view;
+      const info = NUCLEONS[kind];
+      const quarkMass = info.quarks.reduce((s, q) => s + QUARKS[q].mass, 0);
+      const pct = (100 * quarkMass) / info.mass;
+      const chargeSum = info.quarks.map((q) => QUARKS[q].charge).join(' ');
+      const name = kind[0].toUpperCase() + kind.slice(1);
+      $('#nuc-title').innerHTML = `<span><strong>Inside a ${kind}</strong><br><span class="muted">${info.quarks.join('')} · charge ${info.charge}</span></span>`;
+      $('#nuc-info').innerHTML = `
+        <div class="info-head"><div>
+          <h2>${name} <span class="muted">· ${info.quarks.join('')}</span></h2>
+          <div class="muted">${info.mass.toFixed(3)} MeV/c² · radius ≈ ${info.radius} fm · charge ${info.charge}</div>
+        </div></div>
+        <p class="explain">A ${kind} is two ${info.quarks[0] === info.quarks[1] ? 'up' : ''}${kind === 'neutron' ? 'down quarks and one up' : ' quarks and one down'} quark: charges ${chargeSum} add up to ${info.charge}. Each quark carries a “color” charge (red, green or blue, unrelated to real color). Gluons constantly carry color between the quarks, which is why the colors keep swapping, but the three together always stay colorless.</p>
+        <p class="explain">The quarks’ own masses add up to only about ${quarkMass.toFixed(1)} MeV/c², ${pct.toFixed(1)}% of the ${kind}’s ${info.mass.toFixed(1)} MeV/c². The other ${(100 - pct).toFixed(0)}% is the energy of the gluon field and the quarks’ motion (E = mc²). Most of the mass of everything around you comes from this.</p>
+        <div class="facts">
+          <div><h3>Valence quarks</h3><ul>${info.quarks.map((q) => `<li>${QUARKS[q].name} (${q}) <span class="muted">· charge ${QUARKS[q].charge} · ${QUARKS[q].mass} MeV/c²</span></li>`).join('')}</ul></div>
+          <div><h3>Also inside</h3><ul>
+            <li>Gluons <span class="muted">· carriers of the strong force, massless</span></li>
+            <li>Sea quarks <span class="muted">· quark–antiquark pairs that flicker in and out of existence</span></li>
+          </ul></div>
+        </div>
+        <p class="note">Quarks are never found alone (confinement): pulling one out stretches the gluon field until it has enough energy to create a new quark–antiquark pair. The picture is schematic; quarks aren’t little balls with sharp positions.</p>`;
+    }
 
   // ---------- controls ----------
+
+  // Pick a time rate that makes the chosen motion visible: ~4 s per vibration, ~6 s per turn.
+  function autoRate() {
+    const p = periods()[mode];
+    $('#nuc-rate').value = p ? sliderFromRate(p / (mode === 'rotation' ? 6 : 4)) : 25; // 25 ≈ 4 bs/s
+    showRate();
+  }
 
   $('#nuc-mode').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b || b.disabled) return;
     preferred = b.dataset.value;
     setMode(preferred);
+    autoRate();
     render();
   });
   $('#nuc-view').addEventListener('click', (e) => {
@@ -163,10 +253,41 @@ export function createNucleusUI() {
     viewer.setView(view === 'nucleus' ? 'nucleus' : 'nucleon', view);
     render();
   });
+  $('#nuc-style').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    document.querySelectorAll('#nuc-style button').forEach((x) => x.classList.toggle('on', x === b));
+    viewer.setStyle(b.dataset.value);
+  });
+  const stepIsotope = (dir) => {
+    const ns = allowedNeutrons(iso.Z);
+    const next = dir > 0 ? ns.find((n) => n > iso.N) : [...ns].reverse().find((n) => n < iso.N);
+    if (next == null) return;
+    neutrons = next;
+    load();
+  };
+  $('#nuc-iso-down').addEventListener('click', () => stepIsotope(-1));
+  $('#nuc-iso-up').addEventListener('click', () => stepIsotope(1));
   $('#nuc-motion').addEventListener('change', (e) => viewer.setMotion(e.target.checked));
   $('#nuc-quarks').addEventListener('change', (e) => { viewer.setQuarks(e.target.checked); render(); });
+  $('#nuc-field').addEventListener('change', (e) => viewer.setField(e.target.checked));
+  $('#nuc-ruler').addEventListener('change', (e) => viewer.setRuler(e.target.checked));
   $('#nuc-rotate').addEventListener('change', (e) => viewer.setAutoRotate(e.target.checked));
-  $('#nuc-speed').addEventListener('input', (e) => viewer.setSpeed(+e.target.value));
+  const rate = $('#nuc-rate');
+  function showRate() {
+    const r = rateFromSlider(+rate.value);
+    viewer.setTimeRate(r);
+    $('#nuc-rate-value').textContent = `${r < 10 ? r.toFixed(1) : Math.round(r).toLocaleString()} bs/s`;
+  }
+  rate.addEventListener('input', showRate);
+  showRate();
+  $('#nuc-spin').addEventListener('input', (e) => {
+    spin = +e.target.value;
+    $('#nuc-spin-value').textContent = `${spin}ħ`;
+    viewer.setPeriods(periods());
+    autoRate();
+    render();
+  });
   $('#nuc-fit').addEventListener('click', () => viewer.fit());
 
   return {

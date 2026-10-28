@@ -278,7 +278,7 @@ function setMode(mode) {
   molecules.setActive(mol);
   nucleus.setActive(mode === 'nucleus');
   if (mode === 'nucleus') nucleus.setElement(state.z);
-  if (state.z && !mol) history.replaceState(null, '', `#${mode === 'nucleus' ? 'nuc=' : ''}${ELEMENTS[state.z - 1].symbol}`);
+  if (state.z && mode === 'atoms') history.replaceState(null, '', `#${ELEMENTS[state.z - 1].symbol}`);
 }
 
 $('#app-mode').addEventListener('click', (e) => {
@@ -291,7 +291,7 @@ $('#app-mode').addEventListener('click', (e) => {
 buildTable();
 renderColorLegend('phase');
 const hash = decodeURIComponent(location.hash.slice(1));
-const elementPart = hash.startsWith('nuc=') ? hash.slice(4) : hash;
+const [elementPart, isotopeA] = (hash.startsWith('nuc=') ? hash.slice(4) : hash).split('-');
 const fromHash = ELEMENTS.find((el) => el.symbol.toLowerCase() === elementPart.toLowerCase());
 selectElement(fromHash ? fromHash.z : 6);
 if (hash.startsWith('mol') || hash.startsWith('smiles=')) {
@@ -299,6 +299,7 @@ if (hash.startsWith('mol') || hash.startsWith('smiles=')) {
   molecules.loadHash(hash);
 } else if (hash.startsWith('nuc')) {
   setMode('nucleus');
+  if (isotopeA) nucleus.setElement(state.z, +isotopeA);
 } else {
   molecules.setActive(false);
   nucleus.setActive(false);

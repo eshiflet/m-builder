@@ -85,7 +85,7 @@
         </div>
         <div class="stage-bottom">
           <div id="nuc-legend" class="color-legend"></div>
-          <div id="nuc-scale" class="scale"></div>
+          <div class="stage-status"><span id="nuc-clock" class="scale"></span><span id="nuc-scale" class="scale"></span></div>
         </div>
       </div>
 
@@ -98,23 +98,48 @@
             <button data-value="neutron">Inside a neutron</button>
           </div>
         </div>
+        <div class="control" id="nuc-iso-wrap">
+          <span class="control-label">Isotope</span>
+          <div class="stepper">
+            <button id="nuc-iso-down" aria-label="One fewer neutron">−</button>
+            <span id="nuc-iso"></span>
+            <button id="nuc-iso-up" aria-label="One more neutron">+</button>
+          </div>
+        </div>
         <div class="control" id="nuc-mode-wrap">
           <span class="control-label">Oscillation</span>
           <div class="segmented" id="nuc-mode">
-            <button data-value="dipole" class="on">Dipole</button>
+            <button data-value="none" class="on">None</button>
+            <button data-value="dipole">Dipole</button>
             <button data-value="breathing">Breathing</button>
             <button data-value="quadrupole">Quadrupole</button>
             <button data-value="rotation">Rotation</button>
-            <button data-value="none">None</button>
           </div>
+        </div>
+        <label class="control" id="nuc-spin-wrap" hidden>
+          <span class="control-label">Spin</span>
+          <input id="nuc-spin" type="range" min="2" max="30" step="2" value="10">
+          <span id="nuc-spin-value" class="iso-value">10ħ</span>
+        </label>
+        <label class="control" id="nuc-rate-wrap">
+          <span class="control-label">Time</span>
+          <input id="nuc-rate" type="range" min="0" max="100" step="1" value="25">
+          <span id="nuc-rate-value" class="iso-value"></span>
+        </label>
+        <div class="control">
+          <span class="control-label">Style</span>
+          <div class="segmented" id="nuc-style">
+            <button data-value="glow" class="on">Glow</button>
+            <button data-value="solid">Solid</button>
+          </div>
+        </div>
+        <div class="control" id="nuc-extra-wrap">
+          <label class="toggle"><input id="nuc-field" type="checkbox"> Mean field</label>
+          <label class="toggle"><input id="nuc-ruler" type="checkbox" checked> Light ruler</label>
         </div>
         <label class="toggle" id="nuc-motion-wrap"><input id="nuc-motion" type="checkbox" checked> Nucleon motion</label>
         <label class="toggle" id="nuc-quarks-wrap"><input id="nuc-quarks" type="checkbox"> Quarks</label>
-        <label class="toggle"><input id="nuc-rotate" type="checkbox" checked> Rotate</label>
-        <label class="control">
-          <span class="control-label">Speed</span>
-          <input id="nuc-speed" type="range" min="0" max="2" step="0.1" value="1">
-        </label>
+        <label class="toggle"><input id="nuc-rotate" type="checkbox" checked> Rotate view</label>
       </div>
 
       <div id="nuc-info" class="info"></div>

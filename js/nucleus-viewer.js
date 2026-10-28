@@ -1,13 +1,30 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { radiusFm, NUCLEONS } from './nucleus-data.js';
+import { NUCLEONS } from './nucleus-data.js';
 
-// Lengths are in femtometers (1 fm = 10⁻¹⁵ m).
-const NUCLEON_R = 0.95; // display radius: nucleons at nuclear density nearly touch
-export const PROTON_COLOR = '#ff5a4f';
-export const NEUTRON_COLOR = '#9fb6cc';
+// Units: femtometers (fm) and "babyseconds" (bs = 10⁻²³ s), in which light moves 3 fm/bs.
+const C = 2.99792458; // fm per babysecond
+const NUCLEON_MASS = 938.9; // MeV/c²
+const ACC = (C * C) / NUCLEON_MASS; // acceleration (fm/bs²) per unit force (MeV/fm)
+const DT = 0.05; // bs per integration step
+const MAX_STEPS = 12; // per frame; beyond this the nucleon motion runs slower than the clock
+
+// Mean field: Woods–Saxon well, U(r) = −V₀ / (1 + e^{(r − R(θ))/a}).
+const V0 = 50; // MeV
+// Langevin thermostat: drag γ plus random kicks, holding the mean kinetic energy near the
+// Fermi-gas value (3/5)·E_F ≈ 22 MeV, i.e. kT ≈ 14.7 MeV and v_rms ≈ 0.22c.
+const KT = 14.7, KT_HALO = 1.5, GAMMA = 0.4;
+// Nucleon–nucleon force from the Volkov V1 potential, 144.86 e^{−(r/0.82)²} − 83.34 e^{−(r/1.6)²} MeV.
+// The mean field already holds the attraction (and the measured proton radius already
+// includes the Coulomb push), so only the short-range part is kept here: the full
+// repulsive core scaled to 12%, and a weak 3% of the attraction.
+const VR = 144.86, AR = 0.82, VA = 83.34, AA = 1.6, REP_SCALE = 0.12, ATT_SCALE = 0.03, NN_CUT = 3.2;
+
+export const PROTON_COLOR = '#fff3e3';
+export const NEUTRON_COLOR = '#4f7dff';
+export const HALO_COLOR = '#7ff0ff';
 export const COLOR_CHARGES = ['#ff4d6d', '#3ddc84', '#4d8dff']; // "red", "green", "blue"
-const DISPLAY_PERIOD = 1.8; // seconds per oscillation on screen
+const NUCLEON_R = 0.85; // display radius (proton charge radius)
 
 function textSprite(text, color, height) {
   const canvas = document.createElement('canvas');
@@ -32,7 +49,6 @@ function textSprite(text, color, height) {
   return sprite;
 }
 
-// Seeded random numbers so each element's nucleus is laid out the same way every time.
 function mulberry32(seed) {
   return () => {
     seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
@@ -41,6 +57,47 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+// Glowing nucleons drawn as shaded sphere impostors (core pass) plus a soft additive halo.
+const GLOW_VERT = /* glsl */ `
+  attribute vec3 aColor;
+  uniform float uScale;
+  uniform float uSize;
+  varying vec3 vColor;
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mv;
+    gl_PointSize = uSize * uScale / -mv.z;
+    vColor = aColor;
+  }
+`;
+const CORE_FRAG = /* glsl */ `
+  varying vec3 vColor;
+  uniform float uOpacity;
+  void main() {
+    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    float d2 = dot(p, p);
+    if (d2 > 1.0) discard;
+    vec3 n = vec3(p.x, -p.y, sqrt(1.0 - d2));
+    float diff = max(dot(n, normalize(vec3(-0.4, 0.5, 0.8))), 0.0);
+    float spec = pow(max(dot(n, normalize(vec3(-0.2, 0.3, 1.0))), 0.0), 24.0);
+    vec3 c = vColor * (0.35 + 0.75 * diff) + spec * 0.5;
+    // Soft, glowing edge rather than a hard ball.
+    float edge = smoothstep(1.0, 0.55, sqrt(d2));
+    gl_FragColor = vec4(mix(vColor * 1.15, c, edge), uOpacity * (0.35 + 0.65 * edge));
+  }
+`;
+const HALO_FRAG = /* glsl */ `
+  varying vec3 vColor;
+  uniform float uOpacity;
+  void main() {
+    vec2 p = gl_PointCoord * 2.0 - 1.0;
+    float d = length(p);
+    if (d > 1.0) discard;
+    float a = exp(-d * d * 3.0) * 0.55 * uOpacity;
+    gl_FragColor = vec4(vColor * a, a);
+  }
+`;
 
 export class NucleusViewer {
   constructor(container) {
@@ -52,7 +109,7 @@ export class NucleusViewer {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.01, 1000);
     this.camera.up.set(0, 0, 1);
-    this.camera.position.set(14, -22, 10);
+    this.camera.position.set(14, -22, 8);
     this.scene.add(this.camera);
     this.scene.add(new THREE.HemisphereLight('#e8eeff', '#1a1e2c', 1.4));
     const key = new THREE.DirectionalLight('#ffffff', 2.4);
@@ -62,19 +119,27 @@ export class NucleusViewer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.autoRotate = true;
-    this.controls.autoRotateSpeed = 0.6;
+    this.controls.autoRotateSpeed = 0.5;
 
     this.nucleusGroup = new THREE.Group();
     this.nucleonGroup = new THREE.Group(); // single proton / neutron close-up
-    this.scene.add(this.nucleusGroup, this.nucleonGroup);
+    this.rulerGroup = new THREE.Group();
+    this.scene.add(this.nucleusGroup, this.nucleonGroup, this.rulerGroup);
 
-    this.mode = 'dipole';
+    this.mode = 'none';
     this.view = 'nucleus';
+    this.style = 'glow';
     this.motion = true;
     this.showQuarks = false;
-    this.speed = 1;
-    this.t = 0;
+    this.showField = false;
+    this.showRuler = true;
+    this.timeRate = 4; // babyseconds per real second
+    this.spin = 10;
+    this.t = 0; // clock, in babyseconds
+    this.periods = {}; // mode → period in babyseconds
     this.clock = new THREE.Clock();
+    this.onClock = null;
+    this.onStats = null;
     this.onScaleChange = null;
 
     new ResizeObserver(() => this.#resize()).observe(container);
@@ -92,6 +157,8 @@ export class NucleusViewer {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.pixelScale = this.renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2));
+    for (const m of [this.coreMat, this.haloMat]) if (m) m.uniforms.uScale.value = this.pixelScale;
   }
 
   #disposeGroup(group) {
@@ -102,46 +169,82 @@ export class NucleusViewer {
     group.clear();
   }
 
-  /** iso: { Z, N, A }, beta: quadrupole deformation. */
-  setNucleus(iso, beta) {
+  /**
+   * iso: { Z, N, A, halo }, beta: ground-state β₂, radii: { Rp, Rn, a },
+   * periods: { dipole, breathing, quadrupole } in babyseconds, E2: rotational E(2⁺) in MeV.
+   */
+  setNucleus(iso, beta, radii, periods, E2) {
     this.iso = iso;
     this.beta = beta;
-    this.renderPos = null;
+    this.radii = radii;
+    this.periods = periods;
+    this.E2 = E2;
+    this.t = 0;
     this.#disposeGroup(this.nucleusGroup);
     const { Z, A } = iso;
-    const R = radiusFm(A);
-    // Prolate spheroid of the same volume: c along z, a across.
-    const eps = 0.95 * beta;
-    this.axes = { a: R / Math.sqrt(1 + eps), c: R * (1 + eps) };
-
-    // Pack A nucleons into the spheroid: random placement, then push apart.
     const rand = mulberry32(Z * 1000 + A);
+    this.rand = rand;
+
+    // Which nucleons are protons, and which (for halo nuclei) live in the halo.
+    const isProton = new Uint8Array(A);
+    const inHalo = new Uint8Array(A);
+    const halo = iso.halo;
+    const haloCount = halo ? halo.halo : 0;
+    const order = [...Array(A).keys()].sort(() => rand() - 0.5);
+    let p = 0;
+    for (const i of order) if (p < Z) { isProton[i] = 1; p++; }
+    if (halo) {
+      const pool = order.filter((i) => isProton[i] === (halo.kind === 'p' ? 1 : 0));
+      for (let k = 0; k < haloCount; k++) inHalo[pool[k]] = 1;
+    }
+    this.isProton = isProton;
+    this.inHalo = inHalo;
+
+    // Start positions sampled from the (deformed) Woods–Saxon density, then let it settle.
     const pos = new Float32Array(A * 3);
-    const { a, c } = this.axes;
+    const vel = new Float32Array(A * 3);
     for (let i = 0; i < A; i++) {
-      let x, y, z;
-      do {
-        x = (rand() * 2 - 1) * a; y = (rand() * 2 - 1) * a; z = (rand() * 2 - 1) * c;
-      } while ((x * x + y * y) / (a * a) + (z * z) / (c * c) > 1);
-      pos.set([x, y, z], i * 3);
+      const w = this.#well(i, 0);
+      for (let tries = 0; tries < 200; tries++) {
+        const r = (w.core ?? 0) + (w.R + 3 * w.a - (w.core ?? 0)) * Math.cbrt(rand());
+        const ct = 2 * rand() - 1, ph = 2 * Math.PI * rand(), st = Math.sqrt(1 - ct * ct);
+        const R = w.R * this.#shape(ct, w.beta);
+        if (rand() < 1 / (1 + Math.exp((r - R) / w.a))) {
+          pos.set([r * st * Math.cos(ph), r * st * Math.sin(ph), r * ct], i * 3);
+          break;
+        }
+      }
+      const s = Math.sqrt(KT * ACC);
+      for (let k = 0; k < 3; k++) vel[i * 3 + k] = this.#gauss() * s * (inHalo[i] ? 0.3 : 1);
     }
     this.pos = pos;
-    this.vel = new Float32Array(A * 3);
-    for (let k = 0; k < 120; k++) this.#relax(0.5, 0);
+    this.vel = vel;
+    this.force = new Float32Array(A * 3);
+    for (let k = 0; k < 80; k++) this.#step(DT, 0);
 
-    // Protons and neutrons, mixed at random.
-    const isProton = new Uint8Array(A);
-    const order = [...Array(A).keys()].sort(() => rand() - 0.5);
-    for (let i = 0; i < Z; i++) isProton[order[i]] = 1;
-    this.isProton = isProton;
-
-    const geo = new THREE.SphereGeometry(NUCLEON_R, 24, 16);
-    this.nucleonMat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.05, transparent: true, opacity: 1 });
-    this.nucleons = new THREE.InstancedMesh(geo, this.nucleonMat, A);
+    // Nucleons: glowing impostors, or solid spheres.
+    const colors = new Float32Array(A * 3);
     const pc = new THREE.Color(PROTON_COLOR), nc = new THREE.Color(NEUTRON_COLOR);
-    for (let i = 0; i < A; i++) this.nucleons.setColorAt(i, isProton[i] ? pc : nc);
-    this.nucleons.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.nucleusGroup.add(this.nucleons);
+    const hc = new THREE.Color(HALO_COLOR);
+    for (let i = 0; i < A; i++) (inHalo[i] ? hc : isProton[i] ? pc : nc).toArray(colors, i * 3);
+    this.drawPos = new Float32Array(A * 3);
+    this.pointGeo = new THREE.BufferGeometry();
+    this.pointGeo.setAttribute('position', new THREE.BufferAttribute(this.drawPos, 3));
+    this.pointGeo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+    this.pointGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 100);
+    const uniforms = (size) => ({ uScale: { value: this.pixelScale }, uSize: { value: size }, uOpacity: { value: 1 } });
+    this.coreMat = new THREE.ShaderMaterial({ vertexShader: GLOW_VERT, fragmentShader: CORE_FRAG, uniforms: uniforms(2 * NUCLEON_R), transparent: true });
+    this.haloMat = new THREE.ShaderMaterial({ vertexShader: GLOW_VERT, fragmentShader: HALO_FRAG, uniforms: uniforms(5 * NUCLEON_R), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.cores = new THREE.Points(this.pointGeo, this.coreMat);
+    this.halos = new THREE.Points(this.pointGeo, this.haloMat);
+    this.cores.renderOrder = 1;
+    this.halos.renderOrder = 2;
+
+    this.solidMat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.05, transparent: true, opacity: 1 });
+    this.solids = new THREE.InstancedMesh(new THREE.SphereGeometry(NUCLEON_R * 1.1, 24, 16), this.solidMat, A);
+    for (let i = 0; i < A; i++) this.solids.setColorAt(i, inHalo[i] ? hc : isProton[i] ? pc : nc);
+    this.solids.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.nucleusGroup.add(this.cores, this.halos, this.solids);
 
     // Quarks: three per nucleon, each orbiting in its own randomly tilted plane.
     this.quarkFrames = [];
@@ -150,7 +253,7 @@ export class NucleusViewer {
       const w = new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).cross(u).normalize();
       this.quarkFrames.push({ u, w, phase: rand() * Math.PI * 2, rate: 2 + rand() * 2, perm: Math.floor(rand() * 3), next: rand() });
     }
-    this.quarks = new THREE.InstancedMesh(new THREE.SphereGeometry(0.24, 14, 10), new THREE.MeshStandardMaterial({ roughness: 0.3, emissiveIntensity: 0.4 }), A * 3);
+    this.quarks = new THREE.InstancedMesh(new THREE.SphereGeometry(0.22, 14, 10), new THREE.MeshStandardMaterial({ roughness: 0.3 }), A * 3);
     this.quarks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.gluonGeo = new THREE.BufferGeometry();
     this.gluonGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(A * 3 * 2 * 3), 3));
@@ -158,46 +261,123 @@ export class NucleusViewer {
     this.nucleusGroup.add(this.quarks, this.gluons);
     this.#colorQuarks();
 
-    // A faint surface: one shell normally, a proton shell and a neutron shell for the dipole mode.
-    const shellMat = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.BackSide });
+    // Mean-field surfaces (optional): proton and neutron wells.
+    const shellMat = (color) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.09, depthWrite: false, side: THREE.BackSide });
     const unit = new THREE.SphereGeometry(1, 48, 32);
-    this.shell = new THREE.Mesh(unit, shellMat('#cfd8ea', 0.08));
-    this.shellP = new THREE.Mesh(unit.clone(), shellMat(PROTON_COLOR, 0.1));
-    this.shellN = new THREE.Mesh(unit.clone(), shellMat(NEUTRON_COLOR, 0.1));
-    this.nucleusGroup.add(this.shell, this.shellP, this.shellN);
+    this.fieldP = new THREE.Mesh(unit, shellMat('#ffd9b0'));
+    this.fieldN = new THREE.Mesh(unit.clone(), shellMat(NEUTRON_COLOR));
+    this.nucleusGroup.add(this.fieldP, this.fieldN);
 
+    this.#buildRuler();
+    this.statsTimer = 0;
     this.#applyVisibility();
     this.fit();
   }
 
-  // Soft-sphere repulsion between nucleons plus a spheroidal wall; adds thermal-like kicks.
-  #relax(stiffness, kick) {
-    const { pos, vel } = this;
+  #gauss() {
+    const u = 1 - this.rand(), v = this.rand();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  /** R(θ)/R₀ for a quadrupole shape: 1 + β·Y₂₀(θ), volume-normalized to second order. */
+  #shape(cosTheta, beta) {
+    const y20 = 0.6307831 * (1.5 * cosTheta * cosTheta - 0.5); // √(5/4π)·P₂
+    return (1 + beta * y20) / (1 + (beta * beta) / (4 * Math.PI)) ** (1 / 3);
+  }
+
+  // ---------- the collective drive: how the mean field moves at time t ----------
+
+  #drive(t) {
+    const d = { scale: 1, beta: this.beta, shift: 0, angle: 0 };
+    const T = this.periods[this.mode];
+    const phase = T ? (2 * Math.PI * t) / T : 0;
+    // Amplitudes are exaggerated so the motion is visible.
+    if (this.mode === 'breathing') d.scale = 1 + 0.08 * Math.sin(phase);
+    else if (this.mode === 'quadrupole') d.beta = this.beta + 0.18 * Math.sin(phase);
+    else if (this.mode === 'dipole') d.shift = 0.9 * Math.sin(phase);
+    else if (this.mode === 'rotation' && this.periods.rotation) d.angle = (2 * Math.PI * t) / this.periods.rotation;
+    return d;
+  }
+
+  /** The well nucleon i feels at drive state d: center offset, radius, diffuseness, depth, β. */
+  #well(i, t, d = this.#drive(t)) {
+    const { iso, radii } = this;
+    const proton = this.isProton[i];
+    if (this.inHalo?.[i]) {
+      // A shallow, wide well for the loosely bound halo nucleons; the core's states are
+      // already filled (Pauli exclusion), so they're kept out of it (see #step).
+      const core = (radii.Rp + radii.Rn) / 2;
+      return { R: 2.4 * core + 1.5, a: 1.1, V: 10, beta: 0, shift: 0, kT: KT_HALO, core };
+    }
+    const A = iso.A;
+    const R = (proton ? radii.Rp : radii.Rn) * d.scale;
+    // Dipole: protons and neutrons move oppositely, keeping the center of mass fixed.
+    const shift = proton ? (d.shift * iso.N) / A : (-d.shift * iso.Z) / A;
+    return { R, a: radii.a, V: V0, beta: d.beta, shift, kT: KT };
+  }
+
+  // ---------- dynamics ----------
+
+  #step(dt, noise = 1) {
+    const { pos, vel, force } = this;
     const n = pos.length / 3;
-    const { a, c } = this.axes;
-    const d0 = 2 * NUCLEON_R * 0.92;
+    force.fill(0);
+    // Dynamics run in the nucleus's own (body) frame; rotation is applied when drawing.
+    const d = this.#drive(this.t);
+    const ca = 1, sa = 0;
+
+    // Mean field (radial Woods–Saxon force, in the rotating body frame).
+    const wells = [];
+    for (let i = 0; i < n; i++) {
+      const w = this.#well(i, this.t, d);
+      wells.push(w);
+      // Body frame: rotate by −angle about x, then remove the dipole shift along body z.
+      const x = pos[3 * i], y0 = pos[3 * i + 1], z0 = pos[3 * i + 2];
+      const y = ca * y0 + sa * z0, z = -sa * y0 + ca * z0 - w.shift;
+      const r = Math.hypot(x, y, z) || 1e-6;
+      const s = r - w.R * this.#shape(z / r, w.beta);
+      const e = Math.exp(Math.min(40, s / w.a));
+      const dUds = (w.V / w.a) * e / ((1 + e) * (1 + e)); // MeV/fm, pulling inward
+      // Inward along the body-frame radius, rotated back to the lab frame.
+      let push = -dUds;
+      if (w.core && r < w.core + 1) push += 25 * (w.core + 1 - r); // halo: Pauli exclusion from the core
+      const fx = (push * x) / r, fyb = (push * y) / r, fzb = (push * z) / r;
+      force[3 * i] += fx;
+      force[3 * i + 1] += ca * fyb - sa * fzb;
+      force[3 * i + 2] += sa * fyb + ca * fzb;
+      // Outward unit vector (lab frame) and how far past the surface, for the wall below.
+      w.out = [x / r, (ca * y - sa * z) / r, (sa * y + ca * z) / r];
+      w.past = s;
+    }
+
+    // Short-range nucleon–nucleon force (Volkov form): repulsive core, weak attraction.
+    const cut2 = NN_CUT * NN_CUT;
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
         const dx = pos[3 * i] - pos[3 * j], dy = pos[3 * i + 1] - pos[3 * j + 1], dz = pos[3 * i + 2] - pos[3 * j + 2];
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 >= d0 * d0 || d2 < 1e-8) continue;
-        const d = Math.sqrt(d2);
-        const f = (stiffness * (d0 - d)) / d;
-        vel[3 * i] += dx * f; vel[3 * i + 1] += dy * f; vel[3 * i + 2] += dz * f;
-        vel[3 * j] -= dx * f; vel[3 * j + 1] -= dy * f; vel[3 * j + 2] -= dz * f;
+        const r2 = dx * dx + dy * dy + dz * dz;
+        if (r2 >= cut2) continue;
+        // −dV/dr divided by r
+        const f = REP_SCALE * (2 * VR) / (AR * AR) * Math.exp(-r2 / (AR * AR)) - ATT_SCALE * (2 * VA) / (AA * AA) * Math.exp(-r2 / (AA * AA));
+        force[3 * i] += f * dx; force[3 * i + 1] += f * dy; force[3 * i + 2] += f * dz;
+        force[3 * j] -= f * dx; force[3 * j + 1] -= f * dy; force[3 * j + 2] -= f * dz;
       }
     }
+
+    // Langevin update: v += (F/m − γv)dt + √(2γ kT/m · dt)·ξ.
     for (let i = 0; i < n; i++) {
-      const x = pos[3 * i], y = pos[3 * i + 1], z = pos[3 * i + 2];
-      const ia = a - NUCLEON_R * 0.6, ic = c - NUCLEON_R * 0.6;
-      const s = Math.sqrt((x * x + y * y) / (ia * ia) + (z * z) / (ic * ic));
-      if (s > 1) { // pull back inside the surface
-        const k = stiffness * (1 - 1 / s);
-        vel[3 * i] -= x * k; vel[3 * i + 1] -= y * k; vel[3 * i + 2] -= z * k;
-      }
+      const kick = noise * Math.sqrt(2 * GAMMA * wells[i].kT * ACC * dt);
       for (let k = 0; k < 3; k++) {
-        vel[3 * i + k] = (vel[3 * i + k] + (Math.random() - 0.5) * kick) * 0.82;
-        pos[3 * i + k] += vel[3 * i + k];
+        const q = 3 * i + k;
+        vel[q] += (force[q] * ACC - GAMMA * vel[q]) * dt + kick * this.#gauss();
+        pos[q] += vel[q] * dt;
+      }
+      // A classical gas has a fast tail that a real (quantum, Pauli-blocked) nucleus doesn't:
+      // reflect anything that gets more than ~3 diffuseness lengths past the surface.
+      const w = wells[i];
+      if (w.past > 3 * w.a) {
+        const vr = vel[3 * i] * w.out[0] + vel[3 * i + 1] * w.out[1] + vel[3 * i + 2] * w.out[2];
+        if (vr > 0) for (let k = 0; k < 3; k++) vel[3 * i + k] -= 2 * vr * w.out[k];
       }
     }
   }
@@ -211,10 +391,44 @@ export class NucleusViewer {
     this.quarks.instanceColor.needsUpdate = true;
   }
 
+  // ---------- the light-speed ruler ----------
+
+  #buildRuler() {
+    this.#disposeGroup(this.rulerGroup);
+    const ext = this.#extent();
+    const L = Math.max(6, Math.ceil(2 * ext));
+    const z = -ext - 1.6;
+    const pts = [new THREE.Vector3(-L / 2, 0, z), new THREE.Vector3(L / 2, 0, z)];
+    for (let k = 0; k <= L; k++) {
+      const x = -L / 2 + k;
+      const h = k % 5 === 0 ? 0.45 : 0.22;
+      pts.push(new THREE.Vector3(x, 0, z - h / 2), new THREE.Vector3(x, 0, z + h / 2));
+    }
+    const ticks = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: '#c9b46a', transparent: true, opacity: 0.7 }));
+    const photon = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), new THREE.MeshBasicMaterial({ color: '#fff6b0' }));
+    const label = textSprite(`speed of light: 3 fm per babysecond · ruler in fm`, '#c9b46a', Math.max(0.5, L / 26));
+    label.position.set(0, 0, z - 0.9);
+    this.rulerGroup.add(ticks, photon, label);
+    this.ruler = { L, z, photon };
+  }
+
+  #extent() {
+    if (!this.radii) return 5;
+    const R = Math.max(this.radii.Rp, this.radii.Rn) * (1 + 0.65 * Math.abs(this.beta)) + 2;
+    return this.iso.halo ? R * 1.9 : R;
+  }
+
+  // ---------- settings ----------
+
   setMode(mode) { this.mode = mode; this.#applyVisibility(); }
   setMotion(on) { this.motion = on; }
-  setSpeed(s) { this.speed = s; }
+  setTimeRate(r) { this.timeRate = r; }
+  setSpin(J) { this.spin = J; }
+  setPeriods(periods) { this.periods = periods; }
   setQuarks(on) { this.showQuarks = on; this.#applyVisibility(); }
+  setField(on) { this.showField = on; this.#applyVisibility(); }
+  setRuler(on) { this.showRuler = on; this.#applyVisibility(); }
+  setStyle(style) { this.style = style; this.#applyVisibility(); }
   setAutoRotate(on) { this.controls.autoRotate = on; }
 
   setView(view, kind = 'proton') {
@@ -228,13 +442,19 @@ export class NucleusViewer {
     const nuc = this.view === 'nucleus';
     this.nucleusGroup.visible = nuc;
     this.nucleonGroup.visible = !nuc;
-    if (!this.nucleons) return;
+    this.rulerGroup.visible = nuc && this.showRuler;
+    if (!this.cores) return;
+    const glow = this.style === 'glow';
+    const faded = this.showQuarks ? 0.25 : 1;
+    this.cores.visible = this.halos.visible = glow;
+    this.solids.visible = !glow;
+    this.coreMat.uniforms.uOpacity.value = faded;
+    this.haloMat.uniforms.uOpacity.value = this.showQuarks ? 0.3 : 1;
+    this.coreMat.depthWrite = !this.showQuarks;
+    this.solidMat.opacity = faded;
+    this.solidMat.depthWrite = !this.showQuarks;
     this.quarks.visible = this.gluons.visible = this.showQuarks;
-    this.nucleonMat.opacity = this.showQuarks ? 0.22 : 1;
-    this.nucleonMat.depthWrite = !this.showQuarks;
-    const dipole = this.mode === 'dipole';
-    this.shell.visible = !dipole;
-    this.shellP.visible = this.shellN.visible = dipole;
+    this.fieldP.visible = this.fieldN.visible = this.showField;
   }
 
   // ---------- single nucleon close-up ----------
@@ -334,15 +554,16 @@ export class NucleusViewer {
     }
   }
 
+
   // ---------- animation ----------
 
   #tick() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
-    this.t += dt * this.speed;
     if (this.view === 'nucleon' && this.closeup) {
-      this.#tickNucleon(dt * this.speed, this.t);
-    } else if (this.nucleons) {
-      this.#tickNucleus(dt * this.speed);
+      this.tVisual = (this.tVisual ?? 0) + dt;
+      this.#tickNucleon(dt, this.tVisual);
+    } else if (this.pos) {
+      this.#tickNucleus(dt);
     }
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
@@ -354,59 +575,71 @@ export class NucleusViewer {
   }
 
   #tickNucleus(dt) {
-    const { iso } = this;
-    if (this.motion && dt > 0) this.#relax(0.25, 0.09 * Math.min(1, this.speed));
-    const phase = (2 * Math.PI * this.t) / DISPLAY_PERIOD;
-    const s = Math.sin(phase);
-    const { a, c } = this.axes;
-    const A = iso.A, Z = iso.Z, N = iso.N;
-    const m = new THREE.Matrix4();
-    const p = new THREE.Vector3();
-    const q = new THREE.Quaternion();
-    const one = new THREE.Vector3(1, 1, 1);
-
-    // Each mode is a displacement pattern applied to the jostling nucleons (amplitudes exaggerated).
-    let sx = 1, sz = 1, shiftP = 0, shiftN = 0;
-    if (this.mode === 'breathing') { sx = sz = 1 + 0.12 * s; }
-    else if (this.mode === 'quadrupole') { sz = 1 + 0.2 * s; sx = 1 / Math.sqrt(sz); }
-    else if (this.mode === 'dipole' && A > 1) {
-      const amp = 0.18 * a; // protons one way, neutrons the other; the center of mass stays put
-      shiftP = (amp * s * N) / A;
-      shiftN = (-amp * s * Z) / A;
+    const advance = dt * this.timeRate; // babyseconds this frame
+    // The clock (and the collective drive) always run at the chosen rate; the nucleon
+    // dynamics take at most MAX_STEPS steps per frame, so at very high rates they lag.
+    const steps = this.motion ? Math.min(MAX_STEPS, Math.ceil(advance / DT)) : 0;
+    const stepDt = steps ? Math.min(DT, advance / steps) : 0;
+    this.lagging = this.motion && advance > MAX_STEPS * DT * 1.01 && this.mode !== 'rotation';
+    for (let s = 0; s < steps; s++) {
+      this.t += advance / steps;
+      this.#step(stepDt);
     }
-    const spin = this.mode === 'rotation' ? this.t * 1.2 : 0;
-    const rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), spin);
+    if (!steps) this.t += advance;
 
-    const out = this.renderPos ??= new Float32Array(A * 3);
+    // Draw positions: the body-frame simulation, turned by the rotation angle (about x).
+    const A = this.iso.A;
+    const angle = this.#drive(this.t).angle;
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    const out = this.drawPos;
     for (let i = 0; i < A; i++) {
-      p.set(this.pos[3 * i] * sx, this.pos[3 * i + 1] * sx, this.pos[3 * i + 2] * sz);
-      p.z += this.isProton[i] ? shiftP : shiftN;
-      p.applyQuaternion(rot);
-      out.set([p.x, p.y, p.z], i * 3);
-      m.compose(p, q, one);
-      this.nucleons.setMatrixAt(i, m);
+      const y = this.pos[3 * i + 1], z = this.pos[3 * i + 2];
+      out[3 * i] = this.pos[3 * i];
+      out[3 * i + 1] = ca * y - sa * z;
+      out[3 * i + 2] = sa * y + ca * z;
     }
-    this.nucleons.instanceMatrix.needsUpdate = true;
+    this.pointGeo.attributes.position.needsUpdate = true;
 
-    this.shell.scale.set(a * sx + NUCLEON_R * 0.4, a * sx + NUCLEON_R * 0.4, c * sz + NUCLEON_R * 0.4);
-    this.shell.quaternion.copy(rot);
-    for (const [shell, shift] of [[this.shellP, shiftP], [this.shellN, shiftN]]) {
-      shell.scale.set(a + 0.3, a + 0.3, c + 0.3);
-      shell.position.set(0, 0, shift);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
+    if (this.style !== 'glow') {
+      for (let i = 0; i < A; i++) {
+        p.fromArray(out, 3 * i);
+        m.compose(p, q, one);
+        this.solids.setMatrixAt(i, m);
+      }
+      this.solids.instanceMatrix.needsUpdate = true;
+    }
+
+    // Mean-field surfaces follow the drive.
+    const d = this.#drive(this.t);
+    if (this.showField) {
+      const rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), d.angle);
+      for (const [mesh, proton] of [[this.fieldP, 1], [this.fieldN, 0]]) {
+        const R = (proton ? this.radii.Rp : this.radii.Rn) * d.scale;
+        const along = R * this.#shape(1, d.beta), across = R * this.#shape(0, d.beta);
+        mesh.scale.set(across, across, along);
+        const shift = proton ? (d.shift * this.iso.N) / A : (-d.shift * this.iso.Z) / A;
+        mesh.position.set(0, 0, shift).applyQuaternion(rot);
+        mesh.quaternion.copy(rot);
+      }
+    }
+
+    if (this.showRuler && this.ruler) {
+      const { L, z, photon } = this.ruler;
+      photon.position.set(-L / 2 + ((C * this.t) % L), 0, z);
     }
 
     if (this.showQuarks) {
       const pos = this.gluonGeo.attributes.position.array;
       const qp = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
       let recolor = false;
+      // Quarks inside a nucleon move at nearly light speed: ~0.45 fm orbits, a few per babysecond.
       for (let i = 0; i < A; i++) {
         const f = this.quarkFrames[i];
-        const ang = f.phase + this.t * f.rate;
+        const ang = f.phase + this.t * f.rate * 2.5;
         for (let k = 0; k < 3; k++) {
-          const t = ang + (k * 2 * Math.PI) / 3;
-          qp[k].set(out[3 * i], out[3 * i + 1], out[3 * i + 2])
-            .addScaledVector(f.u, Math.cos(t) * 0.45)
-            .addScaledVector(f.w, Math.sin(t) * 0.45);
+          const tt = ang + (k * 2 * Math.PI) / 3;
+          qp[k].fromArray(out, 3 * i).addScaledVector(f.u, Math.cos(tt) * 0.45).addScaledVector(f.w, Math.sin(tt) * 0.45);
           m.compose(qp[k], q, one);
           this.quarks.setMatrixAt(3 * i + k, m);
         }
@@ -414,17 +647,48 @@ export class NucleusViewer {
           const a0 = qp[k], b0 = qp[(k + 1) % 3];
           pos.set([a0.x, a0.y, a0.z, b0.x, b0.y, b0.z], (3 * i + k) * 6);
         }
-        f.next -= dt * 2;
+        f.next -= advance * 0.6;
         if (f.next <= 0) { f.perm = (f.perm + 1) % 3; f.next = 0.3 + Math.random() * 0.7; recolor = true; }
       }
       this.quarks.instanceMatrix.needsUpdate = true;
       this.gluonGeo.attributes.position.needsUpdate = true;
       if (recolor) this.#colorQuarks();
     }
+
+    this.onClock?.(this.t, this.lagging);
+    this.statsTimer += dt;
+    if (this.onStats && this.statsTimer > 0.5) {
+      this.statsTimer = 0;
+      this.onStats(this.#stats());
+    }
+  }
+
+  /** Live measurements from the simulation: rms speed and proton/neutron rms radii. */
+  #stats() {
+    const { pos, vel, isProton, inHalo } = this;
+    const n = pos.length / 3;
+    let v2 = 0, rp = 0, rn = 0, np = 0, nn = 0, cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < n; i++) { cx += pos[3 * i]; cy += pos[3 * i + 1]; cz += pos[3 * i + 2]; }
+    cx /= n; cy /= n; cz /= n;
+    for (let i = 0; i < n; i++) {
+      v2 += vel[3 * i] ** 2 + vel[3 * i + 1] ** 2 + vel[3 * i + 2] ** 2;
+      if (inHalo[i]) continue;
+      const r2 = (pos[3 * i] - cx) ** 2 + (pos[3 * i + 1] - cy) ** 2 + (pos[3 * i + 2] - cz) ** 2;
+      if (isProton[i]) { rp += r2; np++; } else { rn += r2; nn++; }
+    }
+    this.statAvg ??= null;
+    const now = { v: Math.sqrt(v2 / n) / C, rp: np ? Math.sqrt(rp / np) : 0, rn: nn ? Math.sqrt(rn / nn) : 0 };
+    // Running average so the numbers settle instead of flickering.
+    if (!this.statAvg || this.statAvg.A !== this.iso.A) this.statAvg = { ...now, A: this.iso.A, k: 1 };
+    else {
+      const a = this.statAvg, w = 1 / Math.min(++a.k, 30);
+      for (const key of ['v', 'rp', 'rn']) a[key] += (now[key] - a[key]) * w;
+    }
+    return this.statAvg;
   }
 
   fit() {
-    const R = this.view === 'nucleon' ? (this.closeup?.R ?? 0.9) * 1.25 : this.iso ? Math.max(this.axes.a, this.axes.c) + NUCLEON_R * 1.5 : 5;
+    const R = this.view === 'nucleon' ? (this.closeup?.R ?? 0.9) * 1.25 : this.#extent() + 1.5;
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
     const dist = R / Math.sin(Math.min(vfov, hfov) / 2);
