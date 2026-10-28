@@ -94,7 +94,7 @@ with `#smiles=CCO`.
 Switch to **Nucleus** and pick an element. The electrons are left behind, and
 the view zooms into the nucleus of the element's most common isotope (or
 longest-lived, for radioactive elements). Use the **Isotope** stepper for other
-isotopes, including halo nuclei like ¹¹Li. Cream spheres are protons, blue ones
+isotopes, including halo nuclei like ¹¹Li. Blue spheres are protons, cream ones
 are neutrons, and cyan ones are halo nucleons. Link with `#nuc=U` or
 `#nuc=Li-11`.
 

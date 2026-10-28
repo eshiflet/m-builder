@@ -20,8 +20,8 @@ const KT = 14.7, KT_HALO = 1.5, GAMMA = 0.4;
 // repulsive core scaled to 12%, and a weak 3% of the attraction.
 const VR = 144.86, AR = 0.82, VA = 83.34, AA = 1.6, REP_SCALE = 0.12, ATT_SCALE = 0.03, NN_CUT = 3.2;
 
-export const PROTON_COLOR = '#fff3e3';
-export const NEUTRON_COLOR = '#4f7dff';
+export const PROTON_COLOR = '#4f7dff';
+export const NEUTRON_COLOR = '#fff3e3';
 export const HALO_COLOR = '#7ff0ff';
 export const COLOR_CHARGES = ['#ff4d6d', '#3ddc84', '#4d8dff']; // "red", "green", "blue"
 // Display radius: a uniform ball with the proton's rms charge radius (0.84 fm) has
@@ -272,8 +272,8 @@ export class NucleusViewer {
     // Mean-field surfaces (optional): proton and neutron wells.
     const shellMat = (color) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.09, depthWrite: false, side: THREE.BackSide });
     const unit = new THREE.SphereGeometry(1, 48, 32);
-    this.fieldP = new THREE.Mesh(unit, shellMat('#ffd9b0'));
-    this.fieldN = new THREE.Mesh(unit.clone(), shellMat(NEUTRON_COLOR));
+    this.fieldP = new THREE.Mesh(unit, shellMat(PROTON_COLOR));
+    this.fieldN = new THREE.Mesh(unit.clone(), shellMat('#ffd9b0'));
     this.nucleusGroup.add(this.fieldP, this.fieldN);
 
     // Close pairs: a bright bond between nucleons momentarily closer than CLOSE_PAIR.
