@@ -135,7 +135,12 @@ export class AtomViewer {
 
     new ResizeObserver(() => this.#resize()).observe(container);
     this.#resize();
-    this.renderer.setAnimationLoop(() => this.#tick());
+    this.setActive(true);
+  }
+
+  setActive(on) {
+    this.renderer.setAnimationLoop(on ? () => this.#tick() : null);
+    if (on) { this.clock.getDelta(); this.#resize(); }
   }
 
   #buildAxes() {

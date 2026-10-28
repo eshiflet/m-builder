@@ -18,7 +18,11 @@
 <body>
   <header class="app-header">
     <h1>Orbital Table</h1>
-    <p class="tagline">Pick an element to see its electrons in 3D.</p>
+    <div class="segmented app-mode" id="app-mode">
+      <button data-value="atoms" class="on">Atoms</button>
+      <button data-value="molecules">Molecules</button>
+    </div>
+    <p class="tagline" id="tagline">Pick an element to see its electrons in 3D.</p>
   </header>
 
   <main class="layout">
@@ -29,7 +33,7 @@
       <ul id="legend" class="legend"></ul>
     </section>
 
-    <section class="viewer-pane" aria-label="Orbital viewer">
+    <section class="viewer-pane" aria-label="Orbital viewer" id="atom-panel">
       <div class="stage">
         <div id="canvas" class="canvas"></div>
 
@@ -69,6 +73,54 @@
       </div>
 
       <div id="info" class="info"></div>
+    </section>
+
+    <section class="viewer-pane" aria-label="Molecule builder" id="mol-panel" hidden>
+      <div class="builder">
+        <div class="builder-row">
+          <span class="control-label">Molecule</span>
+          <div id="tray" class="tray"></div>
+          <button id="tray-clear" class="chip">Clear</button>
+        </div>
+        <div class="builder-row">
+          <span class="control-label">Try</span>
+          <div id="examples" class="examples"></div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div id="mol-canvas" class="canvas"></div>
+        <div class="stage-top">
+          <div id="mol-title" class="stage-title"></div>
+          <button id="mol-fit" class="chip" title="Zoom to fit (F)">Fit</button>
+        </div>
+        <div class="stage-bottom">
+          <div id="mol-legend" class="color-legend"></div>
+        </div>
+        <div id="mol-empty" class="stage-empty"></div>
+      </div>
+
+      <div class="controls">
+        <div class="control">
+          <span class="control-label">View</span>
+          <div class="segmented" id="mol-view">
+            <button data-value="structure" class="on">Structure</button>
+            <button data-value="orbitals">Orbitals</button>
+            <button data-value="density">Electron density</button>
+          </div>
+        </div>
+        <label class="toggle"><input id="opt-angles" type="checkbox" checked> Angles</label>
+        <label class="toggle"><input id="opt-lengths" type="checkbox"> Lengths</label>
+        <label class="toggle" id="opt-lp-wrap"><input id="opt-lonePairs" type="checkbox" checked> Lone pairs</label>
+        <label class="toggle"><input id="mol-rotate" type="checkbox" checked> Rotate</label>
+        <label class="control" id="iso-wrap" hidden>
+          <span class="control-label">Density</span>
+          <input id="iso" type="range" min="0" max="100" step="1" value="66">
+          <span id="iso-value" class="iso-value"></span>
+        </label>
+      </div>
+
+      <div id="mol-info" class="info"></div>
     </section>
   </main>
 

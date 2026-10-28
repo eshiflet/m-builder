@@ -163,3 +163,24 @@ export function psiField(n, l, k, zeff, res, extent, fraction = 0.85) {
   }
   return { field, iso };
 }
+
+/**
+ * Spherically averaged electron density of a neutral atom, tabulated on
+ * r ∈ [0, rMax] bohr: ρ(r) = Σ count · R_nl(r)² / 4π with each R normalized.
+ * subshells: [{ n, l, count, zeff }]
+ */
+export function atomDensityTable(subshells, rMax = 14, steps = 1400) {
+  const dr = rMax / steps;
+  const table = new Float64Array(steps + 1);
+  const R = new Float64Array(steps + 1);
+  for (const { n, l, count, zeff } of subshells) {
+    let normSq = 0;
+    for (let i = 0; i <= steps; i++) {
+      const r = i * dr;
+      R[i] = radial(n, l, (2 * zeff * r) / n);
+      normSq += R[i] * R[i] * r * r * dr;
+    }
+    for (let i = 0; i <= steps; i++) table[i] += (count * R[i] * R[i]) / normSq / (4 * Math.PI);
+  }
+  return { table, dr, rMax };
+}
