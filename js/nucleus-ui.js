@@ -240,7 +240,20 @@ export function createNucleusUI({ onElementChange } = {}) {
     $('#nuc-clock').textContent = `t = ${t < 1000 ? t.toFixed(1) : about(t)} babyseconds (${sci(t * BABYSECOND)} s)${lagging ? ' · nucleon motion slowed to keep up' : ''}`;
   };
   viewer.onStats = (s) => { stats = s; renderStats(); };
-  viewer.onEventCaption = (text) => { $('#nuc-caption').innerHTML = text; };
+  // Captions pile up in a log that stays until the reader closes it; new ones scroll into view.
+  viewer.onEventCaption = (text) => {
+    const log = $('#nuc-caption-log');
+    if (!text || log.lastElementChild?.innerHTML === text) return;
+    log.lastElementChild?.classList.remove('latest');
+    log.insertAdjacentHTML('beforeend', `<p class="latest">${text}</p>`);
+    $('#nuc-caption').hidden = false;
+    log.scrollTop = log.scrollHeight;
+  };
+  function clearCaptions() {
+    $('#nuc-caption-log').innerHTML = '';
+    $('#nuc-caption').hidden = true;
+  }
+  $('#nuc-caption-close').addEventListener('click', () => { $('#nuc-caption').hidden = true; });
   viewer.onEventEnd = () => { if (eventInfo) { eventInfo.done = true; render(); } };
   viewer.onEventTime = (t, slow) => { physClock = { t, slow }; };
   viewer.onEventStage = (k) => {
@@ -258,7 +271,7 @@ export function createNucleusUI({ onElementChange } = {}) {
   function load() {
     if (viewer.eventPlaying) viewer.stopEvent(false);
     eventInfo = null;
-    $('#nuc-caption').innerHTML = '';
+    clearCaptions();
     iso = isotopeFor(z, neutrons);
     shape = deformation(iso.Z, iso.N);
     modes = collectiveModes(iso.Z, iso.A, shape.beta);
@@ -551,6 +564,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     }
     info.Q ??= Q;
     eventInfo = info;
+    clearCaptions();
     viewer.startEvent(info);
     render();
   }
@@ -613,6 +627,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     eventInfo = { type: 'bombard', bomb: b, plan: b.plan, scene: b.scene, force, seed, beam, E,
       daughter: fin && (fin.Z !== iso.Z || fin.A !== iso.A) && canShow(fin.Z, fin.A) ? [fin.Z, fin.A] : null };
     physClock = null;
+    clearCaptions();
     viewer.startEvent(eventInfo);
     render();
   }
@@ -729,7 +744,7 @@ export function createNucleusUI({ onElementChange } = {}) {
 
   function renderChart() {
     $('#nuc-title').innerHTML = '<span><strong>Chart of nuclides</strong><br><span class="muted">scroll to zoom · drag to pan · click to pick</span></span>';
-    $('#nuc-caption').innerHTML = '';
+    clearCaptions();
     $('#nuc-clock').hidden = true;
     $('#nuc-scale').textContent = '';
     $('#nuc-legend').innerHTML = chart?.colorMode === 'binding'
@@ -789,7 +804,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     const lName = 'spdfghij';
     const mix = orb.lMix.filter(([, w]) => w > 0.02).map(([l, w]) => `${Math.round(100 * w)}% ${lName[l]}`).join(' · ');
     $('#nuc-title').innerHTML = `<span><strong>${lv.label} · Ω<sup>π</sup> = ${sym}</strong><br><span class="muted">${who} orbital in ${isoLabel(iso)} · δ = ${delta.toFixed(2)}</span></span>`;
-    $('#nuc-caption').innerHTML = '';
+    clearCaptions();
     $('#nuc-scale').textContent = '';
     $('#nuc-legend').innerHTML = `<span><i style="background:${SPIN_COLORS.up}"></i>spin up (Λ = Ω − ½)</span><span><i style="background:${SPIN_COLORS.down}"></i>spin down (Λ = Ω + ½)</span><span><i style="background:#8fa3c8"></i>nuclear surface</span>`;
 
@@ -879,7 +894,7 @@ export function createNucleusUI({ onElementChange } = {}) {
   $('#nuc-view').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (eventInfo) { viewer.stopEvent(true); eventInfo = null; $('#nuc-caption').innerHTML = ''; }
+    if (eventInfo) { viewer.stopEvent(true); eventInfo = null; clearCaptions(); }
     view = b.dataset.value;
     document.querySelectorAll('#nuc-view button').forEach((x) => x.classList.toggle('on', x === b));
     showChart(view === 'chart');
@@ -968,7 +983,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     if (b.dataset.event) startEvent(b.dataset.event);
     else if (b.dataset.eventReplay != null && eventInfo.type === 'bombard') fire(eventInfo.force, eventInfo.seed);
     else if (b.dataset.eventReplay != null) startEvent(eventInfo.type);
-    else if (b.dataset.eventStop != null) { viewer.stopEvent(true); eventInfo = null; $('#nuc-caption').innerHTML = ''; render(); }
+    else if (b.dataset.eventStop != null) { viewer.stopEvent(true); eventInfo = null; clearCaptions(); render(); }
     else if (b.dataset.eventDaughter != null) {
       const [dz, da] = eventInfo.daughter;
       viewer.stopEvent(false);

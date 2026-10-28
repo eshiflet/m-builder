@@ -121,7 +121,10 @@
       <div class="stage">
         <div id="nuc-canvas" class="canvas"></div>
         <div id="nuc-chart" class="canvas" hidden></div>
-        <div id="nuc-caption" class="stage-caption"></div>
+        <div id="nuc-caption" class="stage-caption caption-box" hidden>
+          <button id="nuc-caption-close" class="caption-close" title="Close" aria-label="Close captions">×</button>
+          <div id="nuc-caption-log" class="caption-log" aria-live="polite"></div>
+        </div>
         <div class="stage-top">
           <div id="nuc-title" class="stage-title"></div>
           <button id="nuc-fit" class="chip" title="Zoom to fit (F)">Fit</button>

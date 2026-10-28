@@ -437,6 +437,14 @@ input[type="checkbox"] { accent-color: var(--accent); }
   z-index: 2;
 }
 .stage-caption:empty { display: none; }
+.caption-box { pointer-events: auto; padding: 6px 28px 6px 12px; text-align: left; }
+.caption-box[hidden] { display: none; }
+.caption-log { max-height: 7.6em; overflow-y: auto; overscroll-behavior: contain; }
+.caption-log p { margin: 0 0 4px; color: var(--muted); }
+.caption-log p:last-child { margin-bottom: 0; }
+.caption-log p.latest { color: var(--text); }
+.caption-close { position: absolute; top: 3px; right: 5px; border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 2px 4px; cursor: pointer; }
+.caption-close:hover { color: var(--text); }
 .decay-chart { width: 100%; max-width: 560px; height: auto; margin-top: 6px; }
 .decay-chart .curve { fill: none; stroke: var(--accent); stroke-width: 2; }
 .decay-chart .tunnel { fill: #ffd75e; opacity: 0.25; }
