@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orbital Table</title>
+  <meta name="description" content="Interactive periodic table with 3D electron orbital views.">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>Orbital Table</h1>
+    <p class="tagline">Pick an element to see its electrons in 3D.</p>
+  </header>
+
+  <main class="layout">
+    <section class="table-pane" aria-label="Periodic table">
+      <div id="table" class="ptable">
+        <div id="readout" class="readout"></div>
+      </div>
+      <ul id="legend" class="legend"></ul>
+    </section>
+
+    <section class="viewer-pane" aria-label="Orbital viewer">
+      <div class="stage">
+        <div id="canvas" class="canvas"></div>
+
+        <div class="stage-top">
+          <div id="stage-title" class="stage-title"></div>
+          <button id="fit" class="chip" title="Zoom to fit visible orbitals (F)">Fit</button>
+        </div>
+
+        <div class="stage-bottom">
+          <div id="color-legend" class="color-legend"></div>
+          <div class="stage-status"><span id="busy"></span><span id="scale" class="scale"></span></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="control">
+          <span class="control-label">Style</span>
+          <div class="segmented" id="style">
+            <button data-value="cloud" class="on" title="Probability density as a point cloud">Cloud</button>
+            <button data-value="surface" title="Isosurface enclosing ~85% of the probability">Surface</button>
+          </div>
+        </div>
+        <div class="control">
+          <span class="control-label">Color</span>
+          <div class="segmented" id="color-mode">
+            <button data-value="phase" class="on">Phase</button>
+            <button data-value="subshell">Subshell</button>
+          </div>
+        </div>
+        <label class="control">
+          <span class="control-label">Density</span>
+          <input id="density" type="range" min="0.25" max="2.5" step="0.25" value="1">
+        </label>
+        <label class="toggle"><input id="electrons" type="checkbox" checked> Electrons</label>
+        <label class="toggle"><input id="rotate" type="checkbox" checked> Rotate</label>
+        <label class="toggle"><input id="axes" type="checkbox"> Axes</label>
+      </div>
+
+      <div id="info" class="info"></div>
+    </section>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
