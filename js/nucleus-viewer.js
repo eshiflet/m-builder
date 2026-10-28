@@ -150,6 +150,7 @@ export class NucleusViewer {
     this.showMesons = false;
     this.timeRate = 4; // babyseconds per real second
     this.spin = 10;
+    this.flow = 'mixed'; // rotation: 'rigid', 'fluid' (irrotational), or the measured 'mixed'
     this.t = 0; // clock, in babyseconds
     this.periods = {}; // mode → period in babyseconds
     this.clock = new THREE.Clock();
@@ -371,15 +372,73 @@ export class NucleusViewer {
     return { R, a: radii.a, V: V0, beta: d.beta, shift, kT: KT };
   }
 
+  // ---------- rotation as a flow ----------
+
+  /**
+   * How much of the rotation is rigid. A rigid body moves with v = Ω × r; an ideal
+   * (irrotational) fluid inside a rotating spheroid flows with v = Ωk·(0, z, y) in the
+   * body frame, k = (b² − c²)/(b² + c²) (Lamb, Hydrodynamics §110), so its bulge travels
+   * around while the fluid mostly sloshes. Their moments of inertia are I_rig = A·m(b² + c²)/5
+   * and I_irr = k²·I_rig. The value from the rotational energy, I = 3ħ²/E(2⁺), lies in between; the
+   * rigid share λ is chosen so λ·I_rig + (1 − λ)·I_irr = I.
+   */
+  #rotationFlow() {
+    const R = (this.radii.Rp + this.radii.Rn) / 2;
+    const c = R * this.#shape(1, this.beta), b = R * this.#shape(0, this.beta);
+    const k = (b * b - c * c) / (b * b + c * c);
+    const qIrr = k * k;
+    let q = null, lambda = 1;
+    if (this.E2) {
+      const iMeasured = (3 * 41.47) / this.E2; // ħ²/m = (ħc)²/(mc²) = 41.47 MeV·fm²
+      const iRigid = (this.iso.A * (b * b + c * c)) / 5;
+      q = iMeasured / iRigid;
+      lambda = Math.min(1, Math.max(0, (q - qIrr) / (1 - qIrr)));
+    }
+    return { k, q, qIrr, lambda };
+  }
+
+  get rotationFlowInfo() { return this.iso ? this.#rotationFlow() : null; }
+
+  setFlow(flow) { this.flow = flow; }
+
+  /** Carry the nucleons with the rotational flow from clock time t0 to t1. */
+  #advect(t0, t1) {
+    const { k, lambda } = this.#rotationFlow();
+    const L = this.flow === 'rigid' ? 1 : this.flow === 'fluid' ? 0 : lambda;
+    const omega = (2 * Math.PI) / this.periods.rotation;
+    const span = t1 - t0;
+    const n = Math.min(60, Math.max(1, Math.ceil((omega * span) / 0.03)));
+    const h = span / n;
+    const { pos, inHalo } = this;
+    const flow = (y, z, phi) => {
+      const ca = Math.cos(phi), sa = Math.sin(phi);
+      const yb = ca * y + sa * z, zb = -sa * y + ca * z; // body frame
+      const vy = omega * (L * -zb + (1 - L) * k * zb);
+      const vz = omega * (L * yb + (1 - L) * k * yb);
+      return [ca * vy - sa * vz, sa * vy + ca * vz]; // back to the lab frame
+    };
+    for (let s = 0; s < n; s++) {
+      const ta = omega * (t0 + s * h), tm = omega * (t0 + (s + 0.5) * h);
+      for (let i = 0; i < pos.length / 3; i++) {
+        if (inHalo[i]) continue;
+        const y = pos[3 * i + 1], z = pos[3 * i + 2];
+        const [vy1, vz1] = flow(y, z, ta);
+        const [vy2, vz2] = flow(y + vy1 * h / 2, z + vz1 * h / 2, tm); // midpoint (RK2)
+        pos[3 * i + 1] = y + vy2 * h;
+        pos[3 * i + 2] = z + vz2 * h;
+      }
+    }
+  }
+
   // ---------- dynamics ----------
 
   #step(dt, noise = 1) {
     const { pos, vel, force } = this;
     const n = pos.length / 3;
     force.fill(0);
-    // Dynamics run in the nucleus's own (body) frame; rotation is applied when drawing.
+    // The well is turned by the rotation angle; the nucleons are carried by the flow (#advect).
     const d = this.#drive(this.t);
-    const ca = 1, sa = 0;
+    const ca = Math.cos(d.angle), sa = Math.sin(d.angle);
 
     // Mean field (radial Woods–Saxon force, in the rotating body frame).
     const wells = [];
@@ -652,23 +711,18 @@ export class NucleusViewer {
     const steps = this.motion ? Math.min(MAX_STEPS, Math.ceil(advance / DT)) : 0;
     const stepDt = steps ? Math.min(DT, advance / steps) : 0;
     this.lagging = this.motion && advance > MAX_STEPS * DT * 1.01 && this.mode !== 'rotation';
+    const t0 = this.t;
     for (let s = 0; s < steps; s++) {
       this.t += advance / steps;
       this.#step(stepDt);
     }
     if (!steps) this.t += advance;
+    // Rotation is a flow that carries the nucleons along at the full clock rate.
+    if (this.mode === 'rotation' && this.periods.rotation) this.#advect(t0, this.t);
 
-    // Draw positions: the body-frame simulation, turned by the rotation angle (about x).
     const A = this.iso.A;
-    const angle = this.#drive(this.t).angle;
-    const ca = Math.cos(angle), sa = Math.sin(angle);
     const out = this.drawPos;
-    for (let i = 0; i < A; i++) {
-      const y = this.pos[3 * i + 1], z = this.pos[3 * i + 2];
-      out[3 * i] = this.pos[3 * i];
-      out[3 * i + 1] = ca * y - sa * z;
-      out[3 * i + 2] = sa * y + ca * z;
-    }
+    out.set(this.pos);
     this.pointGeo.attributes.position.needsUpdate = true;
 
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();

@@ -126,6 +126,7 @@ export function createNucleusUI() {
       b.classList.toggle('picked', auto && b.dataset.value === m); // what Auto chose
     });
     $('#nuc-spin-wrap').hidden = m !== 'rotation' || view !== 'nucleus';
+    $('#nuc-flow-wrap').hidden = m !== 'rotation' || view !== 'nucleus';
   }
 
   function renderStats() {
@@ -165,6 +166,7 @@ export function createNucleusUI() {
     });
     for (const id of ['nuc-mode-wrap', 'nuc-quarks-wrap', 'nuc-mesons-wrap', 'nuc-motion-wrap', 'nuc-iso-wrap', 'nuc-rate-wrap', 'nuc-extra-wrap']) $(`#${id}`).hidden = view !== 'nucleus';
     $('#nuc-spin-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
+    $('#nuc-flow-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
     $('#nuc-clock').hidden = view !== 'nucleus';
     const ns = allowedNeutrons(iso.Z);
     $('#nuc-iso').innerHTML = isoLabel(iso);
@@ -209,6 +211,10 @@ export function createNucleusUI() {
       .map(([k, label]) => `<li>${label}: ${modes[k] ? `${energyText(modes[k].E)} <span class="muted">· ${bsText(modes[k].T)}</span>` : '<span class="muted">—</span>'}</li>`).join('')
       + `<li>Rotation: ${modes.rotation ? `E(2⁺) ${energyText(modes.rotation.E)} <span class="muted">· ${bsText(rotationPeriod(modes.rotation.E, spin))} per turn at spin ${spin}</span>` : '<span class="muted">not deformed</span>'}</li>`;
 
+    const flowInfo = mode === 'rotation' ? viewer.rotationFlowInfo : null;
+    const flowText = flowInfo?.q != null
+      ? `<p class="explain"><b>How a nucleus rotates.</b> Not like a rigid ball. Its paired nucleons behave partly like a superfluid, which can’t swirl: in a perfect fluid the <i>bulge</i> would travel around while the nucleons mostly slosh in place, like a tide moving around the Earth. From E(2⁺), this nucleus’s moment of inertia is <b>${Math.round(100 * flowInfo.q)}%</b> of a rigid body’s; an ideal fluid would give only ${Math.round(100 * flowInfo.qIrr)}%. So <b>Measured mix</b> moves the nucleons with ${Math.round(100 * flowInfo.lambda)}% rigid rotation and ${Math.round(100 * (1 - flowInfo.lambda))}% irrotational flow. Try <b>Rigid</b> and <b>Superfluid</b> to compare: watch a single nucleon, not the shape.</p>`
+      : '';
     const haloText = iso.halo
       ? `<p class="explain"><b>Halo nucleus.</b> ${iso.A}${iso.symbol} is a compact core with ${iso.halo.halo} loosely bound ${iso.halo.kind === 'n' ? 'neutron' : 'proton'}${iso.halo.halo > 1 ? 's' : ''} roaming far outside it, in a shallow, wide well. That makes it far larger than its mass suggests: ¹¹Li is about as big as ²⁰⁸Pb.</p>` : '';
 
@@ -221,6 +227,7 @@ export function createNucleusUI() {
         </div>
       </div>
       ${modeLine}
+      ${flowText}
       ${haloText}
       <p class="explain">The nucleons move on their own: confined to a few femtometers, they travel at about a fifth to a third of the speed of light, crossing this nucleus in roughly ${Math.max(1, Math.round((2 * R) / (0.25 * 3))).toLocaleString()} babyseconds (1 babysecond = 10⁻²³ s, the time light takes to cross 3 fm). The ruler’s photon moves at light speed for comparison.</p>
       <p class="explain"><b>Nucleons overlap.</b> They’re drawn at 1.08 fm, the size of a uniform ball with the proton’s measured charge radius (0.84 fm). Neighbors sit only ~1.8 fm apart, so their fuzzy edges overlap; they have no hard surface. The strong force between them is carried by pions, with a range of about 1.4 fm (ħ/m<sub>π</sub>c), so each nucleon really only feels the few it touches.</p>
@@ -334,6 +341,12 @@ export function createNucleusUI() {
     viewer.setPeriods(periods());
     autoRate();
     render();
+  });
+  $('#nuc-flow').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    document.querySelectorAll('#nuc-flow button').forEach((x) => x.classList.toggle('on', x === b));
+    viewer.setFlow(b.dataset.value);
   });
   $('#nuc-fit').addEventListener('click', () => viewer.fit());
 
