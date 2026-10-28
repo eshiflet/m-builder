@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { NUCLEONS } from './nucleus-data.js';
+import { NUCLEONS, haloKappa } from './nucleus-data.js';
 
 // Units: femtometers (fm) and "babyseconds" (bs = 10⁻²³ s), in which light moves 3 fm/bs.
 const C = 2.99792458; // fm per babysecond
@@ -220,8 +220,17 @@ export class NucleusViewer {
     const vel = new Float32Array(A * 3);
     for (let i = 0; i < A; i++) {
       const w = this.#well(i, 0);
+      if (w.halo) {
+        // Start halo nucleons already in their equilibrium distribution, radial density ∝ e^{−2κ(r − core)}.
+        const r = w.core - Math.log(1 - rand()) / (2 * w.kappa);
+        const ct = 2 * rand() - 1, ph = 2 * Math.PI * rand(), st = Math.sqrt(1 - ct * ct);
+        pos.set([r * st * Math.cos(ph), r * st * Math.sin(ph), r * ct], i * 3);
+        const s = Math.sqrt(KT_HALO * ACC);
+        for (let k = 0; k < 3; k++) vel[i * 3 + k] = this.#gauss() * s;
+        continue;
+      }
       for (let tries = 0; tries < 200; tries++) {
-        const r = (w.core ?? 0) + (w.R + 3 * w.a - (w.core ?? 0)) * Math.cbrt(rand());
+        const r = (w.R + 3 * w.a) * Math.cbrt(rand());
         const ct = 2 * rand() - 1, ph = 2 * Math.PI * rand(), st = Math.sqrt(1 - ct * ct);
         const R = w.R * this.#shape(ct, w.beta);
         if (rand() < 1 / (1 + Math.exp((r - R) / w.a))) {
@@ -230,7 +239,7 @@ export class NucleusViewer {
         }
       }
       const s = Math.sqrt(KT * ACC);
-      for (let k = 0; k < 3; k++) vel[i * 3 + k] = this.#gauss() * s * (inHalo[i] ? 0.3 : 1);
+      for (let k = 0; k < 3; k++) vel[i * 3 + k] = this.#gauss() * s;
     }
     this.pos = pos;
     this.vel = vel;
@@ -310,7 +319,7 @@ export class NucleusViewer {
     this.nucleusGroup.add(this.mesonPoints);
     this.mesons = [];
     this.busy = new Uint8Array(A);
-    this.mesonCount = { '+': 0, '-': 0, 0: 0 };
+    this.mesonCount = { '+': 0, '-': 0, 0: 0, halo: 0, haloInv: 0, coreInv: 0 };
 
     this.#buildRuler();
     this.statsTimer = 0;
@@ -348,10 +357,12 @@ export class NucleusViewer {
     const { iso, radii } = this;
     const proton = this.isProton[i];
     if (this.inHalo?.[i]) {
-      // A shallow, wide well for the loosely bound halo nucleons; the core's states are
-      // already filled (Pauli exclusion), so they're kept out of it (see #step).
+      // A loosely bound halo nucleon (see #step): its density outside the core falls off as
+      // e^{−2κr}/r², set by how weakly it's bound; the core's interior is mostly Pauli-blocked.
       const core = (radii.Rp + radii.Rn) / 2;
-      return { R: 2.4 * core + 1.5, a: 1.1, V: 10, beta: 0, shift: 0, kT: KT_HALO, core };
+      const kappa = haloKappa(iso);
+      // Little drag: a halo nucleon coasts through its wide, nearly empty region.
+      return { halo: true, R: core + 1 / (2 * kappa), a: 1 / (2 * kappa), V: 0, beta: 0, shift: 0, kT: KT_HALO, gamma: 0.05, core, kappa };
     }
     const A = iso.A;
     const R = (proton ? radii.Rp : radii.Rn) * d.scale;
@@ -384,14 +395,20 @@ export class NucleusViewer {
       const dUds = (w.V / w.a) * e / ((1 + e) * (1 + e)); // MeV/fm, pulling inward
       // Inward along the body-frame radius, rotated back to the lab frame.
       let push = -dUds;
-      if (w.core && r < w.core + 1) push += 25 * (w.core + 1 - r); // halo: Pauli exclusion from the core
+      if (w.halo) {
+        // A thermal distribution e^{−U/kT} matches the quantum halo density e^{−2κr}/r² when
+        // U = kT(2κr + 2 ln r): an inward force kT(2κ + 2/r). Inside the core, whose states are
+        // full (Pauli), it's pushed back out, but it still reaches the core's surface.
+        push = r > w.core ? -w.kT * (2 * w.kappa + 2 / r) : 10 * (w.core - r);
+        w.past = r - (w.core + 8 / w.kappa) - 3 * w.a; // far wall, only for rare stragglers
+      }
       const fx = (push * x) / r, fyb = (push * y) / r, fzb = (push * z) / r;
       force[3 * i] += fx;
       force[3 * i + 1] += ca * fyb - sa * fzb;
       force[3 * i + 2] += sa * fyb + ca * fzb;
       // Outward unit vector (lab frame) and how far past the surface, for the wall below.
       w.out = [x / r, (ca * y - sa * z) / r, (sa * y + ca * z) / r];
-      w.past = s;
+      if (!w.halo) w.past = s;
     }
 
     // Short-range nucleon–nucleon force (Volkov form): repulsive core, weak attraction.
@@ -410,10 +427,11 @@ export class NucleusViewer {
 
     // Langevin update: v += (F/m − γv)dt + √(2γ kT/m · dt)·ξ.
     for (let i = 0; i < n; i++) {
-      const kick = noise * Math.sqrt(2 * GAMMA * wells[i].kT * ACC * dt);
+      const g = wells[i].gamma ?? GAMMA;
+      const kick = noise * Math.sqrt(2 * g * wells[i].kT * ACC * dt);
       for (let k = 0; k < 3; k++) {
         const q = 3 * i + k;
-        vel[q] += (force[q] * ACC - GAMMA * vel[q]) * dt + kick * this.#gauss();
+        vel[q] += (force[q] * ACC - g * vel[q]) * dt + kick * this.#gauss();
         pos[q] += vel[q] * dt;
       }
       // A classical gas has a fast tail that a real (quantum, Pauli-blocked) nucleus doesn't:
@@ -735,12 +753,12 @@ export class NucleusViewer {
   #emit(out) {
     const n = out.length / 3;
     const i = Math.floor(Math.random() * n);
-    if (this.busy[i] || this.inHalo[i]) return;
+    if (this.busy[i]) return;
     const r2max = PION_RANGE * PION_RANGE;
     let j = -1;
     for (let tries = 0; tries < 40; tries++) {
       const k = Math.floor(Math.random() * n);
-      if (k === i || this.busy[k] || this.inHalo[k]) continue;
+      if (k === i || this.busy[k]) continue;
       const dx = out[3 * i] - out[3 * k], dy = out[3 * i + 1] - out[3 * k + 1], dz = out[3 * i + 2] - out[3 * k + 2];
       if (dx * dx + dy * dy + dz * dz < r2max) { j = k; break; }
     }
@@ -748,12 +766,15 @@ export class NucleusViewer {
     // Proton → neutron + π⁺, or neutron → proton + π⁻, swaps a p–n pair's identities;
     // π⁰ leaves them alone. For a p–n pair, charged exchange is twice as likely (isospin).
     const pi = this.isProton[i], pj = this.isProton[j];
+    // A halo nucleon trades only π⁰ here: a charged exchange would just relabel which
+    // identical neutron counts as "the halo", which this picture can't show meaningfully.
+    const halo = this.inHalo[i] || this.inHalo[j];
     let type = 0;
-    if (pi !== pj && Math.random() < 2 / 3) type = pi ? '+' : '-';
+    if (!halo && pi !== pj && Math.random() < 2 / 3) type = pi ? '+' : '-';
     if (type === '+') this.#setIdentity(i, false);
     if (type === '-') this.#setIdentity(i, true);
     this.busy[i] = this.busy[j] = 1;
-    this.mesons.push({ i, j, type, age: 0, lift: (Math.random() - 0.5) * 0.9 });
+    this.mesons.push({ i, j, type, halo, age: 0, lift: (Math.random() - 0.5) * 0.9 });
   }
 
   #updateMesons(out, dt) {
@@ -792,6 +813,8 @@ export class NucleusViewer {
     if (m.type === '-') this.#setIdentity(m.j, false);
     this.busy[m.i] = this.busy[m.j] = 0;
     this.mesonCount[m.type]++;
+    if (m.halo) this.mesonCount.halo++;
+    for (const k of [m.i, m.j]) this.mesonCount[this.inHalo[k] ? 'haloInv' : 'coreInv']++;
   }
 
   #finishMesons() {
@@ -801,7 +824,7 @@ export class NucleusViewer {
   }
 
   /** Exchanges completed so far, by pion charge. */
-  get pionExchanges() { return this.mesonCount ?? { '+': 0, '-': 0, 0: 0 }; }
+  get pionExchanges() { return this.mesonCount ?? { '+': 0, '-': 0, 0: 0, halo: 0, haloInv: 0, coreInv: 0 }; }
 
   /** Find pairs closer than CLOSE_PAIR; draw them and keep running counts. */
   #updatePairs(out) {

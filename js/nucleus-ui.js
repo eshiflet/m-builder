@@ -133,7 +133,18 @@ export function createNucleusUI() {
     if (pc && viewer.showMesons) {
       const c = viewer.pionExchanges;
       const total = c['+'] + c['-'] + c[0];
-      pc.textContent = total ? `Exchanges so far: ${total} (π⁺ ${c['+']}, π⁻ ${c['-']}, π⁰ ${c[0]}): ${c['+'] + c['-']} of them swapped a proton and a neutron.` : '';
+      // Per nucleon, how often halo nucleons trade pions compared with core nucleons.
+      let haloNote = '';
+      if (iso.halo && c.coreInv > 0) {
+        const h = iso.halo.halo;
+        const ratio = (c.haloInv / h) / (c.coreInv / (iso.A - h));
+        const who = iso.halo.kind === 'n' ? 'neutron' : 'proton';
+        haloNote = ` ${c.halo} involved a halo ${who}. Per nucleon, halo ${who}s trade pions ${ratio < 0.95 ? `only ${ratio.toFixed(2)}×` : `${ratio.toFixed(2)}×`} as often as core nucleons:`
+          + (ratio < 0.95
+            ? ' they’re within the pion’s ~1.4 fm reach of the core only part of the time, which is why they’re so loosely bound.'
+            : ' while a halo nucleon is at the core’s surface it trades as often as any neighbor; the long trips outside, where it trades nothing, are what keep it loosely bound. (This number settles down over a minute or so.)');
+      }
+      pc.textContent = total ? `Exchanges so far: ${total} (π⁺ ${c['+']}, π⁻ ${c['-']}, π⁰ ${c[0]}): ${c['+'] + c['-']} of them swapped a proton and a neutron.${haloNote}` : '';
     }
     const el = $('#nuc-live');
     if (!el || !stats || view !== 'nucleus') return;

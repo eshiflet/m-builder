@@ -37,17 +37,29 @@ export const R0 = 1.2; // fm; nuclear radius R = R0 · A^(1/3)
 const H_MEV_S = 4.135667696e-21; // Planck's constant in MeV·s
 
 // Halo nuclei: a compact core plus loosely bound nucleons far outside it.
+// `core` is the core's neutron count; `sep` is the measured energy (MeV) needed to pull
+// the halo nucleons off (S₂ₙ for two-neutron halos, Sₙ or Sₚ for one).
 export const HALOS = {
-  '2,4': { core: 2, halo: 2, kind: 'n' }, // ⁶He
-  '2,6': { core: 2, halo: 4, kind: 'n' }, // ⁸He
-  '3,8': { core: 6, halo: 2, kind: 'n' }, // ¹¹Li = ⁹Li + 2n
-  '4,7': { core: 6, halo: 1, kind: 'n' }, // ¹¹Be = ¹⁰Be + n
-  '4,10': { core: 8, halo: 2, kind: 'n' }, // ¹⁴Be
-  '5,12': { core: 10, halo: 2, kind: 'n' }, // ¹⁷B
-  '6,13': { core: 12, halo: 1, kind: 'n' }, // ¹⁹C
-  '6,16': { core: 14, halo: 2, kind: 'n' }, // ²²C
-  '5,3': { core: 4, halo: 1, kind: 'p' }, // ⁸B = ⁷Be + p (proton halo)
+  '2,4': { core: 2, halo: 2, kind: 'n', sep: 0.975 }, // ⁶He
+  '2,6': { core: 2, halo: 4, kind: 'n', sep: 2.14 }, // ⁸He
+  '3,8': { core: 6, halo: 2, kind: 'n', sep: 0.369 }, // ¹¹Li = ⁹Li + 2n
+  '4,7': { core: 6, halo: 1, kind: 'n', sep: 0.502 }, // ¹¹Be = ¹⁰Be + n
+  '4,10': { core: 8, halo: 2, kind: 'n', sep: 1.27 }, // ¹⁴Be
+  '5,12': { core: 10, halo: 2, kind: 'n', sep: 1.38 }, // ¹⁷B
+  '6,13': { core: 12, halo: 1, kind: 'n', sep: 0.58 }, // ¹⁹C
+  '6,16': { core: 14, halo: 2, kind: 'n', sep: 0.14 }, // ²²C
+  '5,3': { core: 4, halo: 1, kind: 'p', sep: 0.137 }, // ⁸B = ⁷Be + p (proton halo)
 };
+
+/**
+ * Decay constant κ (fm⁻¹) of a halo's density outside the core, ρ ∝ e^{−2κr}/r²,
+ * from κ = √(2μS)/ħc with μ the reduced mass of halo nucleons vs. core.
+ */
+export function haloKappa(iso) {
+  const h = iso.halo.halo, A = iso.A;
+  const mu = (938.9 * h * (A - h)) / A;
+  return Math.sqrt(2 * mu * iso.halo.sep) / 197.327;
+}
 
 // Light isotopes that exist even though the mass formula (poor for small A) says otherwise.
 const KNOWN_LIGHT = {

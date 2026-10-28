@@ -108,8 +108,11 @@ neutron wells, so a neutron skin emerges), with the short-range part of the
 Volkov nucleon–nucleon force (repulsive core, weak attraction). A Langevin
 thermostat holds the speeds at Fermi-motion values (rms ≈ 0.22c). The panel
 measures the live rms speed, the proton and neutron radii, and the neutron skin
-(≈ 0.17 fm in ²⁰⁸Pb and ¹⁸⁰Hf). In halo nuclei the outer nucleons sit in a
-shallow, wide well and are kept out of the filled core (Pauli exclusion).
+(≈ 0.17 fm in ²⁰⁸Pb and ¹⁸⁰Hf). In halo nuclei the outer nucleons follow
+the quantum halo density outside the core, ρ ∝ e^(−2κr)/r², with κ = √(2μS)/ħ
+from each halo's measured separation energy S (0.37 MeV for ¹¹Li). They're
+mostly kept out of the core's interior, whose states are full (Pauli exclusion),
+but they still reach its surface.
 
 **Nucleon size and overlap.** Nucleons are drawn at 1.08 fm, the radius of a
 uniform ball with the proton's rms charge radius (√(5/3)·0.84 fm). At nuclear
@@ -126,7 +129,10 @@ virtual pion lives about ħ/m_πc² ≈ 0.5 babyseconds and reaches about 1.4 fm
 Charged pions swap identities (p → n + π⁺, then π⁺ + n → p), so protons and
 neutrons keep trading places while the total charge stays fixed. For a p–n pair,
 charged exchange is twice as likely as π⁰ (isospin). Exchanges are slowed down to
-be visible, and the panel counts them.
+be visible, and the panel counts them. Halo nucleons exchange pions too, but
+only when they come within reach of the core. In ¹¹Li that works out to roughly
+a quarter as often per nucleon as core nucleons, which is why they're so loosely
+bound.
 
 **Ground-state shape** comes from the Nilsson–Strutinsky
 (macroscopic–microscopic) method in `js/nuclear-shape.js`:
