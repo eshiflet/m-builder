@@ -166,6 +166,10 @@ export class NucleusViewer {
     this.spin = 10;
     this.flow = 'mixed'; // rotation: 'rigid', 'fluid' (irrotational), or the measured 'mixed'
     this.damped = true; // giant resonances ring down and get re-excited
+    this.eventSpeed = 1; // playback speed of decays and reactions
+    this.eventPaused = false;
+    this.onEventTime = null; // (seconds of real physical time, slow-motion factor)
+    this.onEventStage = null; // (stage index)
     this.t = 0; // clock, in babyseconds
     this.periods = {}; // mode → period in babyseconds
     this.clock = new THREE.Clock();
@@ -412,7 +416,7 @@ export class NucleusViewer {
     if (ev && ev.cluster[i] >= 0) {
       // During a decay or reaction, each fragment has its own spherical well that can move.
       const c = ev.clusters[ev.cluster[i]];
-      return { R: c.R, a: 0.5, V: V0, beta: 0, shift: 0, kT: KT, center: c.center };
+      return { R: c.R, a: 0.5, V: V0, beta: 0, shift: 0, kT: KT * (ev.heat ?? 1), center: c.center };
     }
     if (this.inHalo?.[i]) {
       // A loosely bound halo nucleon (see #step): its density outside the core falls off as
@@ -426,7 +430,8 @@ export class NucleusViewer {
     const R = (proton ? radii.Rp : radii.Rn) * d.scale;
     // Dipole: protons and neutrons move oppositely, keeping the center of mass fixed.
     const shift = proton ? (d.shift * iso.N) / A : (-d.shift * iso.Z) / A;
-    return { R, a: radii.a, V: V0, beta: d.beta, beta3: this.beta3, beta1: this.beta1, shift, kT: KT };
+    // An excited nucleus is hotter: its nucleons jostle harder until the energy is carried off.
+    return { R, a: radii.a, V: V0, beta: d.beta, beta3: this.beta3, beta1: this.beta1, shift, kT: KT * (ev?.heat ?? 1) };
   }
 
   // ---------- decays and reactions ----------
@@ -434,13 +439,15 @@ export class NucleusViewer {
   /**
    * Play a decay or reaction. info.type: 'α', 'β⁻', 'β⁺', 'EC', 'fission', 'fusion'.
    * Extra fields: fission { labels: [heavy, light], neutrons, split: fraction of A in the
-   * heavy fragment }, fusion { scene: { iso, radii } }. Captions go to onEventCaption;
-   * onEventEnd fires when it's over.
+   * heavy fragment }, fusion { scene: { iso, radii } }, bombard { plan } (see #setupBombard).
+   * A scene swaps in another nucleus for the event (the compound nucleus, say). Captions go
+   * to onEventCaption; onEventEnd fires when it's over.
    */
   startEvent(info) {
     if (this.event) this.stopEvent(true);
-    this.savedNucleus = [this.iso, this.beta, this.radii, this.periods, this.E2];
-    if (info.type === 'fusion') this.setNucleus(info.scene.iso, 0, info.scene.radii, {}, null);
+    this.savedNucleus = [this.iso, this.beta, this.radii, this.periods, this.E2, this.beta3];
+    const sc = info.scene;
+    if (sc) this.setNucleus(sc.iso, sc.beta ?? 0, sc.radii, sc.periods ?? {}, sc.E2 ?? null, sc.beta3 ?? 0);
     const A = this.iso.A;
     this.savedMode = this.mode;
     this.mode = 'none';
@@ -457,7 +464,8 @@ export class NucleusViewer {
     };
     this.nucleusGroup.add(this.event.group);
     ({ 'α': () => this.#setupAlpha(), 'β⁻': () => this.#setupBeta(-1), 'β⁺': () => this.#setupBeta(1), EC: () => this.#setupBeta(1, true),
-      fission: () => this.#setupFission(), fusion: () => this.#setupFusion() })[info.type]();
+      fission: () => this.#setupFission(), fusion: () => this.#setupFusion(), bombard: () => this.#setupBombard() })[info.type]();
+    this.event.physDone = 0;
     this.#enterStage();
   }
 
@@ -484,16 +492,23 @@ export class NucleusViewer {
     ev.stageT = 0;
     st.enter?.();
     this.onEventCaption?.(st.caption ?? '');
+    this.onEventStage?.(ev.stage);
   }
 
   #tickEvent(dt) {
     const ev = this.event;
+    ev.always?.(dt);
     if (ev.finished) { ev.idle?.(dt); return; }
     const st = ev.stages[ev.stage];
     ev.stageT += dt;
     const u = Math.min(1, ev.stageT / st.duration);
     st.update?.(u, dt);
-    if (u >= 1) { ev.stage++; this.#enterStage(); }
+    // Stages with a physical duration drive the clock: real seconds, and how much slowed down.
+    if (st.phys != null && this.onEventTime) {
+      const rate = this.eventPaused ? 0 : this.eventSpeed;
+      this.onEventTime(ev.physDone + st.phys * u, rate ? st.duration / rate / st.phys : 0);
+    }
+    if (u >= 1) { ev.physDone += st.phys ?? 0; ev.stage++; this.#enterStage(); }
   }
 
   /** A small glowing particle (electron, neutrino, free neutron…) with a fading trail. */
@@ -575,7 +590,7 @@ export class NucleusViewer {
       { duration: 1.4, caption: ev.captions[2], enter: () => members.forEach((i) => this.#tint(i, '#ffd75e')),
         update: (s) => { r(R - 0.7 + 3.8 * s); spin += 0.04; place(1); shell.material.opacity = 0.18 + 0.25 * Math.sin(Math.PI * s); } },
       { duration: 2.8, caption: ev.captions[3], enter: () => { shell.material.opacity = 0.05; members.forEach((i) => this.#tint(i, null)); },
-        update: (s) => { r(R + 3.1 + 30 * s * s); spin += 0.03; place(1); this.#zoom(1 + 0.004); } },
+        update: (s, dt) => { r(R + 3.1 + 30 * s * s); spin += 0.03; place(1); this.#zoom(1 + 0.24 * dt); } },
     ];
   }
 
@@ -608,16 +623,21 @@ export class NucleusViewer {
         if (!capture) lepton.moveTo(at().addScaledVector(d1, 6 * s));
         neutrino.moveTo(at().addScaledVector(d2, 9 * s));
       } },
-      { duration: 2.6, caption: ev.captions[capture ? 3 : 2], enter: () => this.#tint(i, null), update: (s) => {
+      { duration: 2.6, caption: ev.captions[capture ? 3 : 2], enter: () => this.#tint(i, null), update: (s, dt) => {
         if (!capture) lepton.moveTo(at().addScaledVector(d1, 6 + 26 * s));
         neutrino.moveTo(at().addScaledVector(d2, 9 + 40 * s));
-        this.#zoom(1.003);
+        this.#zoom(1 + 0.18 * dt);
       } },
     ];
   }
 
   // Neutron-induced fission: absorb, stretch, neck, snap, fly apart (+ prompt neutrons).
   #setupFission() {
+    this.event.stages = this.#fissionStages(this.event.captions, true);
+  }
+
+  /** Fission stages (stretch, neck, scission, fly apart), optionally after an incoming neutron. */
+  #fissionStages(captions, withIncoming) {
     const ev = this.event;
     const { pos, isProton } = this;
     const A = this.iso.A;
@@ -625,7 +645,7 @@ export class NucleusViewer {
     // Split the nucleons along z into a heavy and a light fragment (by count).
     const ax = this.screenRight.clone();
     const along = (i) => pos[3 * i] * ax.x + pos[3 * i + 1] * ax.y + pos[3 * i + 2] * ax.z;
-    const order = [...Array(A).keys()].filter((i) => !this.inHalo[i]).sort((a, b) => along(a) - along(b));
+    const order = [...Array(A).keys()].filter((i) => !this.inHalo[i] && !ev.scripted[i]).sort((a, b) => along(a) - along(b));
     const nHeavy = Math.round(order.length * ev.split);
     const heavy = order.slice(0, nHeavy), light = order.slice(nHeavy);
     const Rh = 1.15 * Math.cbrt(heavy.length), Rl = 1.15 * Math.cbrt(light.length);
@@ -660,26 +680,29 @@ export class NucleusViewer {
     };
     const perp = this.screenUp.clone();
     const free = neckNeutrons.map((i, k) => ({ i, dir: perp.clone().multiplyScalar(k % 2 ? 1 : -1).applyAxisAngle(ax, k * 0.9).addScaledVector(ax, 0.2 * (k - 1)).normalize() }));
-    ev.stages = [
-      { duration: 1.6, caption: ev.captions[0], enter: () => incoming.moveTo(dirIn.clone().multiplyScalar(R + 22)),
+    const c = withIncoming ? captions : [null, ...captions];
+    const stages = [
+      { duration: 1.6, caption: c[0], enter: () => incoming.moveTo(dirIn.clone().multiplyScalar(R + 22)),
         update: (s) => incoming.moveTo(dirIn.clone().multiplyScalar((R + 22) * (1 - s) + 0.5)) },
-      { duration: 1.6, caption: ev.captions[1], enter: () => { incoming.mesh.visible = false; incoming.trail.visible = false; },
+      { duration: 1.6, caption: c[1], enter: () => { incoming.mesh.visible = false; incoming.trail.visible = false; },
         update: (s) => { const target = 0.6 * R * s; carry(setSep(target), 0.25); } },
-      { duration: 2.2, caption: ev.captions[2], update: (s) => { const target = 0.6 * R + (Rh + Rl - 0.6 * R + 0.5) * s * s; carry(setSep(target), 0.35); } },
-      { duration: 0.8, caption: ev.captions[3], enter: () => {
+      { duration: 2.2, caption: c[2], update: (s) => { const target = 0.6 * R + (Rh + Rl - 0.6 * R + 0.5) * s * s; carry(setSep(target), 0.35); } },
+      { duration: 0.8, caption: c[3], enter: () => {
         free.forEach(({ i }) => { ev.scripted[i] = 1; ev.cluster[i] = -1; this.#tint(i, '#f2f2f2'); });
-      }, update: (s) => {
+      }, update: (s, dt) => {
         carry(setSep(Rh + Rl + 0.5 + 2 * s), 1);
-        free.forEach(({ i, dir }) => { const v = dir.clone().multiplyScalar(0.25); pos[3 * i] += v.x; pos[3 * i + 1] += v.y; pos[3 * i + 2] += v.z; });
+        free.forEach(({ i, dir }) => { const v = dir.clone().multiplyScalar(15 * dt); pos[3 * i] += v.x; pos[3 * i + 1] += v.y; pos[3 * i + 2] += v.z; });
       } },
-      { duration: 3.2, caption: ev.captions[4], enter: () => labels.forEach((l) => { l.visible = true; }), update: (s, dt) => {
+      { duration: 3.2, caption: c[4], enter: () => labels.forEach((l) => { l.visible = true; }), update: (s, dt) => {
         carry(setSep(Rh + Rl + 2.5 + 55 * s * s), 1);
-        free.forEach(({ i, dir }) => { const v = dir.clone().multiplyScalar(0.5); pos[3 * i] += v.x; pos[3 * i + 1] += v.y; pos[3 * i + 2] += v.z; });
+        free.forEach(({ i, dir }) => { const v = dir.clone().multiplyScalar(30 * dt); pos[3 * i] += v.x; pos[3 * i + 1] += v.y; pos[3 * i + 2] += v.z; });
         labels[0].position.fromArray(ev.clusters[0].center).addScaledVector(this.screenUp, Rh + 2.5);
         labels[1].position.fromArray(ev.clusters[1].center).addScaledVector(this.screenUp, Rl + 2.5);
         this.#zoom(1 + 0.25 * dt);
       } },
     ];
+    if (!withIncoming) { incoming.mesh.visible = incoming.trail.visible = false; stages.shift(); }
+    return stages;
   }
 
   // D + T fusion: approach, tunnel, merge into ⁵He*, split into ⁴He + n.
@@ -718,14 +741,237 @@ export class NucleusViewer {
         const lab = this.#label('⁴He');
         const nl = this.#label('n  14.1 MeV');
         ev.splitLabels = [lab, nl];
-      }, update: (s) => {
+      }, update: (s, dt) => {
         moveCluster(0, he4, -12 * s);
         pos[3 * neutron] = 2 + 26 * s; pos[3 * neutron + 1] = 0.5; pos[3 * neutron + 2] = 0;
-        this.#zoom(1.0025);
+        this.#zoom(1 + 0.15 * dt);
         ev.splitLabels[0].position.set(ev.clusters[0].center[0], 0, 3);
         ev.splitLabels[1].position.set(pos[3 * neutron], 0, 2.5);
       } },
     ];
+  }
+
+  /** A γ ray: a short wiggling wave packet with a bright head. */
+  #photon(color, wavelength = 1.6) {
+    const n = 48;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }));
+    line.frustumCulled = false;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8), new THREE.MeshBasicMaterial({ color }));
+    this.event.group.add(line, head);
+    const side = new THREE.Vector3();
+    return {
+      mesh: head, line,
+      place(at, dir) {
+        side.crossVectors(dir, Math.abs(dir.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize();
+        const arr = geo.attributes.position.array, len = 6;
+        for (let k = 0; k < n; k++) {
+          const f = k / (n - 1), back = f * len;
+          const amp = 0.55 * Math.sin(Math.PI * f); // envelope of the packet
+          const p = at.clone().addScaledVector(dir, -back).addScaledVector(side, amp * Math.sin((2 * Math.PI * back) / wavelength));
+          arr.set([p.x, p.y, p.z], 3 * k);
+        }
+        geo.attributes.position.needsUpdate = true;
+        head.position.copy(at);
+      },
+      hide() { line.visible = head.visible = false; },
+    };
+  }
+
+  /**
+   * A particle hitting the nucleus, then whatever comes out. ev.plan (built by the UI from
+   * reactions.js) has { projectile: { key, color, sym, label, radius }, absorbed: { p, n } | null,
+   * stages: [{ kind, caption, phys, ... }] } with kinds:
+   *  approach (to: 'surface' | 'turn' | 'through', turnAt), bounce, turnBack, pass (deflect),
+   *  absorb (heat, gdr, virtual), wait, emit (particle 'n' | 'p' | 'a', E, label, heat),
+   *  gamma (E, label, heat), fission (fission captions, labels, split, neutrons, heat), fragmentGammas, end.
+   * Emitted particles keep flying outward for the rest of the event.
+   */
+  #setupBombard() {
+    const ev = this.event;
+    const { pos, vel } = this;
+    const plan = ev.plan;
+    const R = (this.radii.Rp + this.radii.Rn) / 2;
+    const travel = this.screenRight.clone().addScaledVector(this.screenUp, -0.16).normalize();
+    // Start just inside the left edge of the view, so the whole flight in is visible.
+    const viewHalf = () => this.camera.position.distanceTo(this.controls.target) * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * Math.min(1, this.camera.aspect);
+    // A charged particle turned back far out: zoom out first so the turning point is in view.
+    const turnAt = Math.max(0, ...plan.stages.filter((st) => st.to === 'turn').map((st) => st.turnAt));
+    if (turnAt > 0.6 * viewHalf()) this.#zoom(turnAt / (0.6 * viewHalf()));
+    const halfWidth = viewHalf();
+    const start = travel.clone().multiplyScalar(-Math.max(R + 6, Math.min(R + 34, 0.85 * halfWidth)));
+    const surface = travel.clone().multiplyScalar(-(R + 0.3));
+    const proj = plan.projectile;
+    const labelScale = Math.min(1.4, Math.max(0.35, halfWidth / 24));
+    const label = (text, color, k = 0.8) => { const l = this.#label(text, color); l.scale.multiplyScalar(k * labelScale); return l; };
+    ev.heat = 1;
+    let heatTarget = 1;
+    ev.flyers = [];
+    const flyerSpeed = (E, mass) => (mass ? 7 + 30 * Math.sqrt(Math.min(1, Math.sqrt(1 - (mass / (E + mass)) ** 2))) : 55);
+
+    // The excitation glow: a faint hot halo that fades as the energy is carried away.
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(R + 1.6, 40, 28), new THREE.MeshBasicMaterial({
+      color: '#ff7a3d', transparent: true, opacity: 0, side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+    ev.group.add(glow);
+    let glowTarget = 0;
+
+    // The projectile: nucleons that will join the nucleus, or a marker for anything else.
+    const tetra = [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]].map((o) => new THREE.Vector3(...o).multiplyScalar(0.62));
+    const taken = new Set();
+    let beam = [];
+    if (plan.absorbed) {
+      beam = [...this.#nearest(surface, 1, plan.absorbed.p, taken), ...this.#nearest(surface, 0, plan.absorbed.n, taken)];
+      beam.forEach((i) => { ev.scripted[i] = 1; taken.add(i); this.#tint(i, '#ffd75e'); });
+    }
+    const placeGroup = (members, c, spin = 0) => members.forEach((i, k) => {
+      const o = members.length > 1 ? tetra[k % 4].clone().applyAxisAngle(travel, spin) : new THREE.Vector3();
+      pos.set([c.x + o.x, c.y + o.y, c.z + o.z], 3 * i);
+    });
+    let marker = null;
+    if (!beam.length) marker = proj.key === 'g' ? this.#photon(proj.color, 1.4) : this.#particle(proj.color, proj.radius);
+    const projLabel = label(proj.label, proj.color);
+    const projAt = new THREE.Vector3().copy(start);
+    let projDir = travel.clone();
+    const moveProj = (v) => {
+      projAt.copy(v);
+      if (beam.length) placeGroup(beam, v, ev.stageT * 3);
+      else if (proj.key === 'g') marker.place(v, projDir);
+      else marker.moveTo(v);
+      projLabel.position.copy(v).addScaledVector(this.screenUp, 2.2 * labelScale);
+    };
+    moveProj(start);
+
+    /** Send something flying: nucleon indices, or a marker with moveTo/place. */
+    const fly = (thing, from, dir, speed, label) => {
+      ev.flyers.push({ thing, at: from.clone(), dir: dir.clone().normalize(), speed, label, spin: 0 });
+    };
+    ev.always = (dt) => {
+      ev.heat += (heatTarget - ev.heat) * Math.min(1, 3 * dt);
+      glow.material.opacity += (glowTarget * (0.75 + 0.25 * Math.sin(ev.stageT * 9)) - glow.material.opacity) * Math.min(1, 4 * dt);
+      for (const f of ev.flyers) {
+        if (f.at.length() > 160) continue;
+        f.at.addScaledVector(f.dir, f.speed * dt);
+        f.spin += 3 * dt;
+        if (Array.isArray(f.thing)) placeGroup(f.thing, f.at, f.spin);
+        else if (f.thing.place) f.thing.place(f.at, f.dir);
+        else f.thing.moveTo(f.at);
+        f.label?.position.copy(f.at).addScaledVector(this.screenUp, 2 * labelScale);
+      }
+    };
+    const directions = [
+      this.screenUp.clone().addScaledVector(this.screenRight, 0.6), this.screenUp.clone().negate().addScaledVector(this.screenRight, 0.9),
+      this.screenRight.clone().negate().addScaledVector(this.screenUp, 0.7), this.screenUp.clone().addScaledVector(this.screenRight, -0.5),
+      this.screenRight.clone().addScaledVector(this.screenUp, -0.9), this.screenUp.clone().negate().addScaledVector(this.screenRight, -0.6),
+    ].map((v) => v.normalize());
+    let emitted = 0;
+    const nextDir = () => directions[emitted++ % directions.length].clone().applyAxisAngle(travel, 0.3 * Math.floor(emitted / 6));
+    const A_all = () => pos.length / 3;
+
+    const stages = [];
+    for (const st of plan.stages) {
+      const base = { caption: st.caption, phys: st.phys, duration: st.duration ?? 1.6 };
+      if (st.kind === 'approach') {
+        // Charged projectiles slow down as the Coulomb repulsion pushes back.
+        const end = st.to === 'turn' ? travel.clone().multiplyScalar(-st.turnAt) : st.to === 'through' ? new THREE.Vector3() : surface;
+        const slow = proj.charged;
+        stages.push({ ...base, duration: st.duration ?? 2.4, update: (u) => {
+          const e = slow ? 1 - (1 - u) ** 2 : u;
+          moveProj(start.clone().lerp(end, e));
+        } });
+      } else if (st.kind === 'bounce' || st.kind === 'turnBack' || st.kind === 'pass') {
+        // Leaves without getting in: rebound off the surface, back off the barrier, or through.
+        stages.push({ ...base, enter: () => {
+          let dir;
+          if (st.kind === 'pass') dir = travel.clone().applyAxisAngle(this.screenUp.clone().cross(travel).normalize(), -(st.deflect ?? 0));
+          else if (st.kind === 'turnBack') dir = travel.clone().negate().applyAxisAngle(new THREE.Vector3().crossVectors(travel, this.screenUp).normalize(), 0.45);
+          else dir = travel.clone().negate().applyAxisAngle(new THREE.Vector3().crossVectors(travel, this.screenUp).normalize(), 1.1);
+          projDir = dir;
+          fly(beam.length ? beam : marker, projAt, dir, st.speed ?? 24, projLabel);
+          if (beam.length) beam.forEach((i) => { ev.scripted[i] = 1; });
+        }, update: (u, dt) => this.#zoom(1 + 0.06 * dt) });
+      } else if (st.kind === 'absorb') {
+        stages.push({ ...base, duration: st.duration ?? 1.4, enter: () => {
+          projLabel.visible = false;
+          heatTarget = st.heat; glowTarget = st.glow;
+          if (beam.length) {
+            // The nucleons join: free them into the well, still moving inward.
+            beam.forEach((i) => {
+              ev.scripted[i] = 0;
+              for (let k = 0; k < 3; k++) vel[3 * i + k] = travel.getComponent(k) * 2;
+              this.#tint(i, '#ffd75e');
+            });
+          } else if (proj.key === 'e') {
+            // The electron passes by, handing the nucleus a virtual photon.
+            const dir = travel.clone().applyAxisAngle(this.screenUp.clone().cross(travel).normalize(), -0.5);
+            projDir = dir;
+            fly(marker, projAt, dir, 30, label(st.electronLabel, proj.color));
+            const v = this.#photon('#c7a6ff', 1.0);
+            ev.virtual = { v, from: projAt.clone() };
+          } else marker.hide();
+          if (st.gdr) this.mode = 'dipole';
+        }, update: (u) => {
+          if (ev.virtual) {
+            const p = ev.virtual.from.clone().lerp(new THREE.Vector3(), Math.min(1, u * 2));
+            ev.virtual.v.place(p, ev.virtual.from.clone().negate().normalize());
+            if (u > 0.5) ev.virtual.v.hide();
+          }
+          if (u > 0.6) beam.forEach((i) => this.#tint(i, null));
+        } });
+      } else if (st.kind === 'wait') {
+        stages.push({ ...base, duration: st.duration ?? 2.2, enter: () => { heatTarget = st.heat ?? heatTarget; if (st.glow != null) glowTarget = st.glow; } });
+      } else if (st.kind === 'emit') {
+        stages.push({ ...base, duration: st.duration ?? 1.7, enter: () => {
+          const dir = nextDir();
+          const want = st.particle === 'a' ? { p: 2, n: 2 } : st.particle === 'p' ? { p: 1, n: 0 } : { p: 0, n: 1 };
+          const near = dir.clone().multiplyScalar(R);
+          const free = (i) => !ev.scripted[i] && !taken.has(i);
+          const pick = (proton, k) => {
+            const all = this.#nearest(near, proton, A_all(), taken).filter(free);
+            return all.slice(0, k);
+          };
+          const members = [...pick(1, want.p), ...pick(0, want.n)];
+          members.forEach((i) => { ev.scripted[i] = 1; taken.add(i); this.#tint(i, st.particle === 'a' ? '#ffb347' : null); });
+          const c = members.reduce((v, i) => v.add(new THREE.Vector3().fromArray(pos, 3 * i)), new THREE.Vector3()).divideScalar(members.length || 1);
+          const l = label(st.label, st.particle === 'n' ? '#f2f2f2' : st.particle === 'p' ? '#9cc4ff' : '#ffb347', 0.75);
+          fly(members.length > 1 ? members : { moveTo: (v) => pos.set([v.x, v.y, v.z], 3 * members[0]) }, c, dir, flyerSpeed(st.E, st.particle === 'a' ? 3727 : 939), l);
+          heatTarget = st.heat; glowTarget = st.glow;
+          if (this.mode === 'dipole') this.mode = 'none';
+        }, update: (u, dt) => this.#zoom(1 + 0.08 * dt) });
+      } else if (st.kind === 'gamma') {
+        stages.push({ ...base, duration: st.duration ?? 1.3, enter: () => {
+          const dir = nextDir();
+          const ph = this.#photon(st.color ?? '#ffe066', Math.max(0.6, 2.4 / Math.sqrt(st.E)));
+          const l = label(st.label, st.color ?? '#ffe066', 0.7);
+          fly(ph, dir.clone().multiplyScalar(R * 0.5), dir, 55, l);
+          heatTarget = st.heat; glowTarget = st.glow;
+          if (this.mode === 'dipole') this.mode = 'none';
+        } });
+      } else if (st.kind === 'fission') {
+        ev.split = st.split; ev.neutrons = st.neutrons; ev.labels = st.labels;
+        heatTarget = st.heat ?? heatTarget;
+        const fs = this.#fissionStages(st.captions, false);
+        fs.forEach((f, k) => {
+          f.phys = st.phys?.[k];
+          const enter = f.enter;
+          if (k === 0) f.enter = () => { if (this.mode === 'dipole') this.mode = 'none'; enter?.(); };
+          if (k === 2) f.enter = () => { enter?.(); glowTarget = 0; heatTarget = 1; };
+        });
+        stages.push(...fs);
+      } else if (st.kind === 'fragmentGammas') {
+        stages.push({ ...base, duration: st.duration ?? 1.6, enter: () => {
+          st.gammas.forEach((g, k) => {
+            const c = new THREE.Vector3().fromArray(ev.clusters[k % 2].center);
+            const dir = nextDir();
+            const ph = this.#photon('#ffe066', 1.2);
+            fly(ph, c, dir, 55, null);
+          });
+        } });
+      } else if (st.kind === 'end') {
+        stages.push({ ...base, duration: st.duration ?? 0.6, enter: () => { heatTarget = 1; glowTarget = 0; } });
+      }
+    }
+    ev.stages = stages;
   }
 
   // ---------- rotation as a flow ----------
@@ -1114,6 +1360,8 @@ export class NucleusViewer {
   }
 
   #tickNucleus(dt) {
+    // Decays and reactions play at their own adjustable speed (and can be paused).
+    if (this.event) dt *= this.eventPaused ? 0 : this.eventSpeed;
     const advance = dt * this.timeRate; // babyseconds this frame
     // The clock (and the collective drive) always run at the chosen rate; the nucleon
     // dynamics take at most MAX_STEPS steps per frame, so at very high rates they lag.

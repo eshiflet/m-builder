@@ -238,6 +238,42 @@ others are predicted from the mass formula and labeled as such.
 
 After a decay, **Show** jumps to the daughter nucleus.
 
+**Bombard with** fires one particle straight at the nucleus: a **neutron**, **proton**,
+**electron**, **γ ray**, or **α particle** (the projectile Rutherford used for the first
+artificial transmutation, ¹⁴N(α,p)¹⁷O, and Chadwick to find the neutron). Pick the energy
+with the slider (0.01 eV to 500 MeV, log scale) or a preset such as thermal neutrons,
+14 MeV D–T neutrons, or the giant dipole resonance for photons, then **▶ Fire**.
+
+- **Getting in.** Neutrons have no barrier; slow ones have huge wavelengths, so they
+  are captured readily. Protons and α particles must cross or tunnel through the
+  Coulomb barrier (Gamow), or they turn back far outside (Rutherford scattering, with
+  the view zooming out to the turning point). Photons are absorbed in the giant dipole
+  resonance (Lorentzian with the Thomas–Reiche–Kuhn sum rule) or, above ~40 MeV, by
+  proton–neutron pairs. Electrons nearly always scatter elastically, which is how
+  nuclear sizes are measured; rarely they hand over energy through a virtual photon.
+- **The compound nucleus.** Once in, the energy E* = separation energy + kinetic energy
+  is shared by all the nucleons, which jostle harder (the thermostat runs hotter, with a
+  glowing halo), and the nucleus forgets how it formed (Bohr).
+- **What it does next** follows the Hauser–Feshbach statistical model: neutron, proton,
+  α and γ emission and fission compete in proportion to their open channels
+  (transmission × Fermi-gas level density of what's left; Bohr–Wheeler over measured
+  barriers for actinides). The residual nucleus keeps emitting until it runs out of
+  energy, so you can see (n,γ), (n,p), (n,α), (n,2n), (γ,n), (n,f), photofission and
+  spallation-like cascades. Checks: thermal neutrons on ²³⁵U fission 85% of the time
+  (measured ≈86%), on ²³⁸U they're captured; ¹⁰B → ⁷Li + α; ¹⁴N(n,p)¹⁴C; ²⁰⁸Pb(γ,n) at
+  the giant resonance.
+- **Time.** The panel lists every stage with its real duration, from 10⁻²² s for the
+  flight in to ~10⁻¹⁴ s for the last γ rays. Each stage is slowed by its own factor
+  (shown live under the view), and **Playback** pauses or changes the speed (0.1×–5×).
+- **Results:** the odds of every outcome (click a row to watch that one), an energy
+  budget (kinetic energy in, Q from the mass difference, every particle and γ ray out,
+  plus recoil), and what's left, with whether it's stable or how it decays and a button
+  to open it. **Hits only** skips shots that miss, unless getting in is rarer than 0.1%.
+
+Not modeled: individual resonances (real slow-neutron cross sections swing by factors
+of 1000), direct one-step reactions, pre-equilibrium emission and pion production, and
+the discrete levels of light nuclei, so odds there are rough.
+
 **Shell model** (a View option) shows the Nilsson diagram: the energy of every
 proton or neutron orbital versus deformation δ, from the deformed shell model
 (a stretched harmonic oscillator plus spin–orbit and l² terms, with
@@ -356,5 +392,7 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 - `js/nucleus-data.js`: isotopes, radii and neutron skins, halos, mass formula, and collective mode energies
 - `js/nuclear-shape.js`: Nilsson–Strutinsky ground-state deformation (liquid drop + shell + pairing)
 - `js/nucleus-viewer.js`: nucleon dynamics (mean field, NN force, thermostat) and the three.js nucleus and nucleon scenes
+- `js/reactions.js`: compound-nucleus reactions (Coulomb tunneling, photoabsorption, level densities, decay widths, cascades, fission splits)
+- `js/bombard.js`: turns one collision into animation stages, captions, real timings, odds, energy budget and products
 - `js/nucleus-ui.js`: Nucleus mode controls and info
 - `js/main.js`: UI wiring and mode switching

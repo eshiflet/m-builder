@@ -7,6 +7,8 @@ import {
 } from './nucleus-data.js';
 import { NuclideChart, MODE_COLORS, describeCell } from './nuclide-chart.js';
 import { nilssonDiagram, fillLevels, orbital, samplePoints, shellsFor, omegaText, MEASURED_SPIN } from './nilsson.js';
+import { bombard, BEAM_PRESETS, BEAM_DEFAULT, BEAM_RANGE, CHANNEL_NAMES, energyText as beamEnergyText, fateOf, canShow, nucHTML, pct } from './bombard.js';
+import { PROJECTILES } from './reactions.js';
 import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, PION_COLORS, COLOR_CHARGES } from './nucleus-viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -224,14 +226,27 @@ export function createNucleusUI({ onElementChange } = {}) {
   let shellPref = 'n', shellKind = 'n', shellDelta = null, shellPick = null; // shell model: δ null = ground state, pick null = valence
   let shellKey = '';
   let active = false;
+  let beam = 'n'; // projectile for bombarding
+  const beamE = { ...BEAM_DEFAULT }; // energy per projectile (MeV, or 'gdr')
+  let physClock = null; // { t, slow } while a bombardment plays
 
   viewer.onScaleChange = (fm) => { $('#nuc-scale').textContent = `view width ≈ ${fm < 10 ? fm.toFixed(1) : fm.toFixed(0)} fm`; };
   viewer.onClock = (t, lagging) => {
+    if (eventInfo?.type === 'bombard' && physClock) {
+      const { t: tp, slow } = physClock;
+      $('#nuc-clock').innerHTML = `real time since launch: ${sci(tp, 2)} s${slow ? ` · slowed down ${sci(slow, 1)}×` : ' · paused'}`;
+      return;
+    }
     $('#nuc-clock').textContent = `t = ${t < 1000 ? t.toFixed(1) : about(t)} babyseconds (${sci(t * BABYSECOND)} s)${lagging ? ' · nucleon motion slowed to keep up' : ''}`;
   };
   viewer.onStats = (s) => { stats = s; renderStats(); };
   viewer.onEventCaption = (text) => { $('#nuc-caption').innerHTML = text; };
   viewer.onEventEnd = () => { if (eventInfo) { eventInfo.done = true; render(); } };
+  viewer.onEventTime = (t, slow) => { physClock = { t, slow }; };
+  viewer.onEventStage = (k) => {
+    if (eventInfo) eventInfo.stage = k;
+    document.querySelectorAll('#beam-timeline li').forEach((li, i) => { li.classList.toggle('now', i === k); li.classList.toggle('past', i < k); });
+  };
 
   /** Show element z, optionally a specific isotope by mass number. */
   function setElement(zNew, A = null) {
@@ -357,6 +372,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     if (view === 'chart') return renderChart();
     if (view === 'shell') return renderShell();
     if (view !== 'nucleus') return renderNucleon();
+    if (eventInfo?.type === 'bombard') return renderBombard();
     if (eventInfo) return renderEvent();
 
     const el = ELEMENTS[iso.Z - 1];
@@ -449,6 +465,7 @@ export function createNucleusUI({ onElementChange } = {}) {
   function renderDecayButtons() {
     const { list } = availableEvents();
     $('#nuc-decay-wrap').hidden = view !== 'nucleus';
+    renderBeam();
     $('#nuc-decay').innerHTML = (eventInfo
       ? `<button class="chip" data-event-stop>■ Back to ${isoLabel(iso)}</button>${eventInfo.done ? '<button class="chip" data-event-replay>↻ Replay</button>' : ''}${
         eventInfo.done && eventInfo.daughter ? `<button class="chip" data-event-daughter>Show ${nuclideHTML(...eventInfo.daughter)}</button>` : ''}`
@@ -560,6 +577,129 @@ export function createNucleusUI({ onElementChange } = {}) {
     $('#nuc-info').innerHTML = `<div class="info-head"><div><h2>${e.type === 'fusion' ? 'D + T fusion' : `${MODE_NAMES[e.type] ?? 'Fission'} of ${isoLabel(iso)}`}</h2>
       <div class="muted">${e.done ? 'Finished. Replay it, look at the result, or go back.' : 'Playing… (captions in the view above)'}</div></div></div>${body}
       <p class="note">The animation is schematic: real α decay waits ${e.type === 'α' ? 'on average the half-life for each nucleus' : 'its turn'}, scission takes ~10⁻²⁰ s, and the particles here move far slower than real ones.</p>`;
+  }
+
+  // ---------- bombardment ----------
+
+  const beamEnergy = () => (beamE[beam] === 'gdr' ? modes.dipole?.E ?? 14 : beamE[beam]);
+
+  function renderBeam() {
+    $('#nuc-beam-wrap').hidden = view !== 'nucleus';
+    $('#nuc-playback-wrap').hidden = view !== 'nucleus' || !eventInfo;
+    document.querySelectorAll('#nuc-beam button').forEach((b) => b.classList.toggle('on', b.dataset.value === beam));
+    const [lo, hi] = BEAM_RANGE[beam];
+    const slider = $('#nuc-beam-energy');
+    slider.min = lo; slider.max = hi;
+    const E = beamEnergy();
+    slider.value = Math.log10(E);
+    $('#nuc-beam-energy-value').textContent = beamEnergyText(E);
+    $('#nuc-beam-presets').innerHTML = BEAM_PRESETS[beam].filter(([, v]) => v !== 'gdr' || modes.dipole).map(([name, v]) => {
+      const on = v === beamE[beam] || (typeof v === 'number' && typeof beamE[beam] === 'number' && Math.abs(Math.log10(v / beamE[beam])) < 0.01);
+      return `<button class="chip${on ? ' on' : ''}" data-preset="${v}">${name}</button>`;
+    }).join('');
+    $('#nuc-pause').textContent = viewer.eventPaused ? '▶ Resume' : '❚❚ Pause';
+  }
+
+  /** Fire one projectile; force picks the outcome ('miss' or a decay channel), seed replays one. */
+  function fire(force = null, seed = null) {
+    if (view !== 'nucleus') return;
+    if (viewer.eventPlaying) viewer.stopEvent(true);
+    seed ??= (Math.random() * 2 ** 31) | 0;
+    const E = beamEnergy();
+    // "Hits only": a miss is shown only when asked for, or when nothing can get in.
+    if (!force && $('#nuc-hits-only').checked) force = 'hit';
+    const b = bombard(iso, modes, beam, E, { force, seed });
+    const fin = b.finals.length === 1 ? b.finals[0] : null;
+    eventInfo = { type: 'bombard', bomb: b, plan: b.plan, scene: b.scene, force, seed, beam, E,
+      daughter: fin && (fin.Z !== iso.Z || fin.A !== iso.A) && canShow(fin.Z, fin.A) ? [fin.Z, fin.A] : null };
+    physClock = null;
+    viewer.startEvent(eventInfo);
+    render();
+  }
+
+  /** Viewer stages in order (a fission step plays as four), for the timeline. */
+  function timelineOf(plan) {
+    const out = [];
+    const name = { approach: 'Flies in', bounce: 'Bounces off', turnBack: 'Turned back', pass: 'Flies on', absorb: 'Absorbed', wait: 'Compound nucleus', fragmentGammas: 'Prompt γ rays', end: 'Done' };
+    for (const st of plan.stages) {
+      if (st.kind === 'fission') ['Stretches', 'Neck forms', 'Scission', 'Fragments fly apart'].forEach((l, k) => out.push({ label: l, phys: st.phys[k] }));
+      else if (st.kind === 'emit') out.push({ label: `Emits ${st.label}`, phys: st.phys });
+      else if (st.kind === 'gamma') out.push({ label: `Emits ${st.label}`, phys: st.phys });
+      else out.push({ label: name[st.kind], phys: st.phys });
+    }
+    return out;
+  }
+
+  function renderBombard() {
+    const e = eventInfo, b = e.bomb, P = PROJECTILES[b.x];
+    const target = isoLabel(iso);
+    $('#nuc-title').innerHTML = `<span><strong>${target} + ${P.sym}</strong><br><span class="muted">${b.notation}</span></span>`;
+    const ent = b.ent;
+    // Getting in.
+    let inText;
+    if (b.x === 'n') inText = `<p>No electric charge, so no barrier. Whether it sticks depends on matching waves: ${ent.Ecm < 1e-4 ? 'slow neutrons have huge wavelengths, so their capture cross section is enormous (resonances, not modeled here, make real values swing by factors of 1000)' : 'faster neutrons often just bounce off'}.</p>
+      <p>Head-on chance of being absorbed: <b>${pct(ent.pIn)}</b> · average cross section ${ent.sigma < 10 ? ent.sigma.toFixed(2) : about(ent.sigma)} b (the nucleus’s own area is ${(Math.PI * (1.2 * Math.cbrt(iso.A)) ** 2 / 100).toFixed(2)} b)</p>`;
+    else if (P.Z > 0) inText = `<p>It must climb or tunnel through a <b>${ent.barrier.toFixed(1)} MeV</b> Coulomb barrier with ${beamEnergyText(ent.Ecm)} (centre-of-mass energy).${ent.Ecm < ent.barrier ? ` Head-on, it would stop ${ent.closest.toFixed(0)} fm from the centre if it couldn’t tunnel.` : ' That’s enough to go over the top.'}</p>
+      <p>Head-on chance of getting in: <b>${pct(ent.pIn)}</b>${ent.pIn < 1e-3 && ent.pIn > 0 ? ' (too rare to show by default: click a row below to watch one that makes it)' : ''}</p>`;
+    else if (b.x === 'g') inText = `<p>Photons are absorbed mainly in the giant dipole resonance (${modes.dipole ? `${modes.dipole.E.toFixed(1)} MeV, ${modes.dipole.width.toFixed(1)} MeV wide` : 'none in so light a nucleus'}), where the protons and neutrons slosh against each other; above ~40 MeV by proton–neutron pairs.</p>
+      <p>Absorption cross section ${(ent.sigma * 1000).toPrecision(3)} mb · chance a photon aimed at the nucleus is absorbed: <b>${pct(ent.pIn)}</b></p>`;
+    else inText = `<p>Electrons only feel the electric charge. Nearly always they scatter elastically (how nuclear sizes are measured); rarely they hand over energy through a virtual photon, which then acts like a γ ray.</p>
+      <p>Chance of exciting the nucleus: <b>${pct(ent.pIn)}</b>${b.hit ? ` · this one transferred ${b.Estar.toFixed(1)} MeV` : ''}</p>`;
+
+    // Odds once inside.
+    let oddsHTML = '';
+    const f = b.first;
+    if (f) {
+      const cz = ent.compound.Z, ca = ent.compound.A;
+      const thisFirst = b.hit ? (b.steps[0]?.kind ?? null) : 'miss';
+      const rows = Object.entries(f.probs).filter(([, p]) => p > 0).sort((a, c) => c[1] - a[1]);
+      oddsHTML = `<p>${b.x === 'e' ? 'With' : 'Once inside, '}${nucHTML(cz, ca)}* ${b.x === 'e' && !b.hit ? `(at ${(b.Estar ?? Math.min(b.E, modes.dipole?.E ?? 15)).toFixed(1)} MeV)` : `has ${(b.Estar ?? ent.compound.E).toFixed(2)} MeV`} and lives ${sci(f.lifetime, 1)} s. Its first move:</p>
+        <table class="odds"><tbody>
+        ${rows.map(([k, p]) => `<tr data-force="${k}" class="${thisFirst === k ? 'this' : ''}" title="Watch this happen"><td>${CHANNEL_NAMES[k]}</td><td class="num"><span class="bar" style="width:${Math.max(1, 70 * p).toFixed(0)}px"></span>${pct(p)}</td><td class="watch">▶</td></tr>`).join('')}
+        <tr data-force="miss" class="${thisFirst === 'miss' ? 'this' : ''}" title="Watch a miss"><td>${b.x === 'n' ? 'Doesn’t get in (bounces off)' : P.Z > 0 ? 'Doesn’t get in (scattered)' : 'Doesn’t interact'}</td><td class="num">${pct(1 - ent.pIn)} of shots</td><td class="watch">▶</td></tr>
+        </tbody></table>
+        ${f.Bf != null && f.Bf < 40 ? `<p class="muted" style="margin-top:6px">Fission barrier ${f.Bf.toFixed(1)} MeV${(b.Estar ?? ent.compound.E) > f.Bf ? ': the excitation is above it, so it can split' : ': the excitation is below it, so splitting would need tunneling'}.</p>` : ''}`;
+    } else oddsHTML = '<p class="muted">It can’t get in at this energy.</p>';
+
+    // Timeline.
+    const tl = timelineOf(b.plan);
+    let tsum = 0;
+    const tlHTML = tl.map((s, i) => {
+      if (s.phys != null) tsum += s.phys;
+      return `<li class="${i === e.stage ? 'now' : i < (e.stage ?? 0) ? 'past' : ''}"><span class="k">${i + 1}</span><span>${s.label}</span><span class="t">${s.phys != null ? `${sci(s.phys, 1)} s` : ''}</span></li>`;
+    }).join('');
+
+    // Energy budget.
+    const row = (a, v, cls = '') => `<tr class="${cls}"><td>${a}</td><td class="num">${v >= 0 ? '' : '−'}${beamEnergyText(Math.abs(v))}</td></tr>`;
+    const budget = `<table class="budget"><tbody>
+      <tr class="head"><td colspan="2">In</td></tr>
+      ${row(`${P.name} (${b.x === 'g' ? 'photon energy' : 'kinetic energy'})`, b.Ein)}
+      ${b.hit && Math.abs(b.Q) > 1e-6 ? row(b.Q >= 0 ? `Mass turned into energy (Q; Δm = ${(b.Q / 931.494 * 1000).toFixed(2)} milli-u)` : `Energy turned into mass (Q; Δm = ${(-b.Q / 931.494 * 1000).toFixed(2)} milli-u)`, b.Q) : ''}
+      ${row('Total to share', b.Ein + b.Q, 'sum')}
+      <tr class="head"><td colspan="2">Out</td></tr>
+      ${b.out.map((o) => row(o.kind === 'frag' ? `${o.what} fragment (kinetic)` : o.kind === 'γ' ? `${o.what} (radiation)` : `${o.what} (kinetic)`, o.E)).join('')}
+      ${Math.abs(b.recoil) > 5e-4 ? row(b.out.some((o) => o.kind === 'frag') ? 'Fragments’ other motion' : 'Recoil of the nucleus', b.recoil) : ''}
+      ${row('Total', b.out.reduce((t, o) => t + o.E, 0) + (Math.abs(b.recoil) > 5e-4 ? b.recoil : 0), 'sum')}
+    </tbody></table>`;
+
+    // Products.
+    const products = b.finals.map((n) => `<li><b>${nucHTML(n.Z, n.A)}</b><span class="muted">${fateOf(n.Z, n.A)}</span>${canShow(n.Z, n.A) && (n.Z !== iso.Z || n.A !== iso.A) ? `<button class="chip" data-open-nuc="${n.Z},${n.A}">Show</button>` : ''}</li>`).join('');
+    const freeN = b.out.filter((o) => o.kind === 'n').length;
+
+    const sumLine = !b.hit ? 'Nothing inside the nucleus changed.' : Math.abs(b.Q) < 1e-6
+      ? `It went in and the same kind of particle came back out (“compound elastic”): no mass changed, but the energy was shared out differently.`
+      : (b.Q > 0 ? `It released <b>${b.Q.toFixed(2)} MeV</b>, about ${about(b.Q / 1e-5)} times the energy of one molecule of TNT exploding (≈10 eV).` : `It cost ${(-b.Q).toFixed(2)} MeV of the projectile’s energy to rearrange the nucleus.`);
+    $('#nuc-info').innerHTML = `<div class="info-head"><div><h2>${b.notation}</h2>
+      <div class="muted">${e.done ? 'Finished. Fire again for another roll of the dice, or click a row to watch that outcome.' : 'Playing… captions are in the view above. Use Playback to slow down or pause.'}</div></div></div>
+      <p class="explain">${sumLine}</p>
+      <div class="beam-grid"><div><h3>Getting in</h3>${inText}</div><div><h3>What the compound nucleus does</h3>${oddsHTML}</div></div>
+      <div class="beam-grid">
+        <div><h3>This shot, step by step (real durations)</h3><ol class="timeline" id="beam-timeline">${tlHTML}</ol>
+          <p class="muted" style="font-size:11.5px;margin-top:6px">From launch to the end: ${sci(tsum, 1)} s, spanning ${Math.max(1, Math.round(Math.log10(Math.max(...tl.filter((s) => s.phys).map((s) => s.phys)) / Math.min(...tl.filter((s) => s.phys).map((s) => s.phys)))))} powers of ten. Each stage is slowed by a different factor (shown at the bottom of the view) so you can watch them all.</p></div>
+        <div><h3>Energy budget</h3>${budget}</div>
+      </div>
+      <div class="beam-section"><h3>What’s left</h3><ul class="products">${products}${freeN ? `<li><b>${freeN} free neutron${freeN > 1 ? 's' : ''}</b><span class="muted">${b.steps.some((st) => st.kind === 'fission') ? 'each can split another nucleus: a chain reaction' : 'free neutrons β-decay in ~15 minutes unless captured first'}</span></li>` : ''}</ul></div>
+      <p class="note">How it’s modeled: Bohr’s compound-nucleus picture with the Hauser–Feshbach statistical model. The projectile gets in with an optical-model (neutron), Coulomb-tunneling (charged) or giant-dipole (photon) probability; the compound nucleus then decays by neutron, proton, α or γ emission or by fission, each in proportion to its number of open channels (transmission × Fermi-gas level density of what’s left; Bohr–Wheeler over the measured fission barrier). Masses are measured for about 70 key nuclei and from the mass formula otherwise. Not modeled: individual resonances, direct (one-step) reactions, pre-equilibrium emission, pion production above ~150 MeV, and the discrete levels of light nuclei, so treat odds there as rough. In the animation, the nucleons are simulated but the projectile and emitted particles are scripted, and speeds are compressed.</p>`;
   }
 
   // ---------- chart of nuclides ----------
@@ -826,6 +966,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.event) startEvent(b.dataset.event);
+    else if (b.dataset.eventReplay != null && eventInfo.type === 'bombard') fire(eventInfo.force, eventInfo.seed);
     else if (b.dataset.eventReplay != null) startEvent(eventInfo.type);
     else if (b.dataset.eventStop != null) { viewer.stopEvent(true); eventInfo = null; $('#nuc-caption').innerHTML = ''; render(); }
     else if (b.dataset.eventDaughter != null) {
@@ -834,6 +975,41 @@ export function createNucleusUI({ onElementChange } = {}) {
       setElement(dz, da);
       onElementChange?.(dz);
     }
+  });
+
+  $('#nuc-beam').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    beam = b.dataset.value;
+    renderBeam();
+  });
+  $('#nuc-beam-energy').addEventListener('input', (e) => {
+    beamE[beam] = 10 ** +e.target.value;
+    renderBeam();
+  });
+  $('#nuc-beam-presets').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-preset]');
+    if (!b) return;
+    beamE[beam] = b.dataset.preset === 'gdr' ? 'gdr' : +b.dataset.preset;
+    renderBeam();
+  });
+  $('#nuc-fire').addEventListener('click', () => fire());
+  $('#nuc-info').addEventListener('click', (e) => {
+    const row = e.target.closest('[data-force]');
+    if (row && eventInfo?.type === 'bombard') { fire(row.dataset.force); return; }
+    const open = e.target.closest('[data-open-nuc]');
+    if (open) {
+      const [zz, aa] = open.dataset.openNuc.split(',').map(Number);
+      viewer.stopEvent(false);
+      setElement(zz, aa);
+      onElementChange?.(zz);
+    }
+  });
+  $('#nuc-pause').addEventListener('click', () => { viewer.eventPaused = !viewer.eventPaused; renderBeam(); });
+  $('#nuc-speed').addEventListener('input', (e) => {
+    viewer.eventSpeed = 10 ** +e.target.value;
+    const v = viewer.eventSpeed;
+    $('#nuc-speed-value').textContent = `${v < 1 ? v.toFixed(2) : v.toFixed(1)}× speed`;
   });
 
   return {

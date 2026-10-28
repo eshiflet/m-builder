@@ -175,6 +175,27 @@
           <span class="control-label">Decay &amp; reactions</span>
           <div id="nuc-decay" class="examples"></div>
         </div>
+        <div class="control beam-control" id="nuc-beam-wrap">
+          <span class="control-label">Bombard with</span>
+          <div class="segmented small" id="nuc-beam">
+            <button data-value="n" class="on" title="Neutron">n</button>
+            <button data-value="p" title="Proton">p</button>
+            <button data-value="e" title="Electron">e⁻</button>
+            <button data-value="g" title="Gamma-ray photon">γ</button>
+            <button data-value="a" title="Alpha particle (a ⁴He nucleus)">α</button>
+          </div>
+          <input id="nuc-beam-energy" type="range" step="0.01" aria-label="Projectile energy">
+          <span id="nuc-beam-energy-value" class="iso-value"></span>
+          <div id="nuc-beam-presets" class="examples"></div>
+          <button id="nuc-fire" class="chip fire" title="Fire one particle straight at the nucleus">▶ Fire</button>
+          <label class="toggle" title="Skip the shots that miss (the odds table still shows how often they do)"><input id="nuc-hits-only" type="checkbox" checked> Hits only</label>
+        </div>
+        <div class="control" id="nuc-playback-wrap" hidden>
+          <span class="control-label">Playback</span>
+          <button id="nuc-pause" class="chip">❚❚ Pause</button>
+          <input id="nuc-speed" type="range" min="-1" max="0.7" step="0.01" value="0" aria-label="Playback speed">
+          <span id="nuc-speed-value" class="iso-value">1× speed</span>
+        </div>
         <div class="control" id="nuc-mode-wrap">
           <span class="control-label">Oscillation</span>
           <div class="segmented" id="nuc-mode">
