@@ -3,12 +3,14 @@ import { electronConfig, configHTML, slaterZeff, orbitalOccupancy, L_LETTERS } f
 import { ANGULAR } from './orbitals.js';
 import { AtomViewer, SUBSHELL_COLORS, PHASE_COLORS } from './viewer.js';
 import { createMoleculeUI } from './molecule-ui.js';
+import { createNucleusUI } from './nucleus-ui.js';
 
 const $ = (sel) => document.querySelector(sel);
 
 const viewer = new AtomViewer($('#canvas'));
 const state = { z: null, subshells: [], hidden: new Set(), mode: 'atoms' };
 const molecules = createMoleculeUI({ onTrayChange: showTrayCounts });
+const nucleus = createNucleusUI();
 
 // ---------- Periodic table ----------
 
@@ -95,6 +97,7 @@ function selectElement(z) {
   document.querySelector(`.cell[data-z="${z}"]`)?.classList.add('selected');
   showReadout(z);
   if (state.mode === 'atoms') history.replaceState(null, '', `#${el.symbol}`);
+  else if (state.mode === 'nucleus') history.replaceState(null, '', `#nuc=${el.symbol}`);
 
   const cat = CATEGORIES[el.category];
   $('#stage-title').innerHTML = `
@@ -103,6 +106,7 @@ function selectElement(z) {
 
   viewer.setAtom(state.subshells);
   renderInfo();
+  if (state.mode === 'nucleus') nucleus.setElement(z);
 }
 
 const outermostN = () => Math.max(...state.subshells.map((s) => s.n));
@@ -238,7 +242,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'ArrowRight') selectElement(state.z + 1);
   else if (e.key === 'ArrowLeft') selectElement(state.z - 1);
-  else if (e.key === 'f' || e.key === 'F') viewer.fit();
+  else if (e.key === 'f' || e.key === 'F') (state.mode === 'nucleus' ? nucleus : viewer).fit();
   else return;
   e.preventDefault();
 });
@@ -254,20 +258,27 @@ function showTrayCounts(tray) {
   });
 }
 
+const TAGLINES = {
+  atoms: 'Pick an element to see its electrons in 3D.',
+  molecules: 'Click elements to add atoms and build a molecule.',
+  nucleus: 'Pick an element to zoom into its nucleus: protons, neutrons, and the quarks inside them.',
+};
+
 function setMode(mode) {
   state.mode = mode;
   const mol = mode === 'molecules';
   document.querySelectorAll('#app-mode button').forEach((b) => b.classList.toggle('on', b.dataset.value === mode));
   $('#table').classList.toggle('building', mol);
-  $('#atom-panel').hidden = mol;
+  $('#atom-panel').hidden = mode !== 'atoms';
   $('#mol-panel').hidden = !mol;
-  $('#tagline').textContent = mol
-    ? 'Click elements to add atoms and build a molecule.'
-    : 'Pick an element to see its electrons in 3D.';
+  $('#nuc-panel').hidden = mode !== 'nucleus';
+  $('#tagline').textContent = TAGLINES[mode];
   document.querySelectorAll('.cell.selected').forEach((c) => c.classList.toggle('dim-select', mol));
-  viewer.setActive(!mol);
+  viewer.setActive(mode === 'atoms');
   molecules.setActive(mol);
-  if (!mol && state.z) history.replaceState(null, '', `#${ELEMENTS[state.z - 1].symbol}`);
+  nucleus.setActive(mode === 'nucleus');
+  if (mode === 'nucleus') nucleus.setElement(state.z);
+  if (state.z && !mol) history.replaceState(null, '', `#${mode === 'nucleus' ? 'nuc=' : ''}${ELEMENTS[state.z - 1].symbol}`);
 }
 
 $('#app-mode').addEventListener('click', (e) => {
@@ -280,11 +291,15 @@ $('#app-mode').addEventListener('click', (e) => {
 buildTable();
 renderColorLegend('phase');
 const hash = decodeURIComponent(location.hash.slice(1));
-const fromHash = ELEMENTS.find((el) => el.symbol.toLowerCase() === hash.toLowerCase());
+const elementPart = hash.startsWith('nuc=') ? hash.slice(4) : hash;
+const fromHash = ELEMENTS.find((el) => el.symbol.toLowerCase() === elementPart.toLowerCase());
 selectElement(fromHash ? fromHash.z : 6);
 if (hash.startsWith('mol') || hash.startsWith('smiles=')) {
   setMode('molecules');
   molecules.loadHash(hash);
+} else if (hash.startsWith('nuc')) {
+  setMode('nucleus');
 } else {
   molecules.setActive(false);
+  nucleus.setActive(false);
 }

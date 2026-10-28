@@ -89,6 +89,36 @@ Link to a molecule with `#mol=H2O`, to an ion with `#mol=CO3&q=-2`, to a
 specific isomer and conformer with `#mol=C6H12O6&v=1&c=2`, or to any SMILES
 with `#smiles=CCO`.
 
+## Nucleus
+
+Switch to **Nucleus** and pick an element. The electrons are left behind, and
+the view zooms into the nucleus of the element's most common isotope (or
+longest-lived, for radioactive elements). Red spheres are protons and gray-blue
+ones are neutrons. Link with `#nuc=U`.
+
+- **Size and shape:** radius R = 1.2·A^⅓ fm. Nuclei near the magic numbers
+  (2, 8, 20, 28, 50, 82, 126) are round. Mid-shell ones (rare earths, actinides)
+  are egg-shaped, with the deformation β₂ estimated from the valence proton and
+  neutron counts (Casten's P-factor).
+- **Binding energy** uses the semi-empirical mass formula (volume, surface,
+  Coulomb, asymmetry and pairing terms).
+- **Oscillations**, with each element's energy and period:
+  - Dipole (giant dipole resonance, protons against neutrons):
+    31.2A^-⅓ + 20.6A^-⅙ MeV (Berman–Fultz)
+  - Breathing (monopole): 80A^-⅓ MeV
+  - Quadrupole (surface): 63A^-⅓ MeV
+  - Rotation, for deformed nuclei: E(2⁺) ≈ 1225/(A^7/3·β²) MeV (Grodzins)
+
+  Periods are about 10⁻²² s, so the animation is slowed by about 10²¹ and the
+  amplitudes are exaggerated.
+- **Nucleon motion:** the nucleons jostle and migrate inside the nuclear surface
+  (soft-sphere dynamics standing in for their Fermi motion).
+- **Quarks:** shows three quarks inside every nucleon, with gluon lines and
+  color charges that keep swapping. **Inside a proton / neutron** zooms into
+  one nucleon: valence quarks (uud or udd) with their charges, wiggling gluon flux
+  tubes, and flickering sea quark pairs. It also explains that the quarks' own
+  masses are only about 1% of the nucleon's mass.
+
 ## What you're looking at
 
 - **Configurations** follow the Madelung (aufbau) rule, with the known exceptions
@@ -123,4 +153,7 @@ with `#smiles=CCO`.
 - `js/conformer-worker.js`: runs the conformer search off the main thread
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI
+- `js/nucleus-data.js`: isotopes, mass formula, deformation, and collective mode energies
+- `js/nucleus-viewer.js`: three.js nucleus and nucleon scenes
+- `js/nucleus-ui.js`: Nucleus mode controls and info
 - `js/main.js`: UI wiring and mode switching

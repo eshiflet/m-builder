@@ -21,6 +21,7 @@
     <div class="segmented app-mode" id="app-mode">
       <button data-value="atoms" class="on">Atoms</button>
       <button data-value="molecules">Molecules</button>
+      <button data-value="nucleus">Nucleus</button>
     </div>
     <p class="tagline" id="tagline">Pick an element to see its electrons in 3D.</p>
   </header>
@@ -73,6 +74,50 @@
       </div>
 
       <div id="info" class="info"></div>
+    </section>
+
+    <section class="viewer-pane" aria-label="Nucleus viewer" id="nuc-panel" hidden>
+      <div class="stage">
+        <div id="nuc-canvas" class="canvas"></div>
+        <div class="stage-top">
+          <div id="nuc-title" class="stage-title"></div>
+          <button id="nuc-fit" class="chip" title="Zoom to fit (F)">Fit</button>
+        </div>
+        <div class="stage-bottom">
+          <div id="nuc-legend" class="color-legend"></div>
+          <div id="nuc-scale" class="scale"></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="control">
+          <span class="control-label">View</span>
+          <div class="segmented" id="nuc-view">
+            <button data-value="nucleus" class="on">Nucleus</button>
+            <button data-value="proton">Inside a proton</button>
+            <button data-value="neutron">Inside a neutron</button>
+          </div>
+        </div>
+        <div class="control" id="nuc-mode-wrap">
+          <span class="control-label">Oscillation</span>
+          <div class="segmented" id="nuc-mode">
+            <button data-value="dipole" class="on">Dipole</button>
+            <button data-value="breathing">Breathing</button>
+            <button data-value="quadrupole">Quadrupole</button>
+            <button data-value="rotation">Rotation</button>
+            <button data-value="none">None</button>
+          </div>
+        </div>
+        <label class="toggle" id="nuc-motion-wrap"><input id="nuc-motion" type="checkbox" checked> Nucleon motion</label>
+        <label class="toggle" id="nuc-quarks-wrap"><input id="nuc-quarks" type="checkbox"> Quarks</label>
+        <label class="toggle"><input id="nuc-rotate" type="checkbox" checked> Rotate</label>
+        <label class="control">
+          <span class="control-label">Speed</span>
+          <input id="nuc-speed" type="range" min="0" max="2" step="0.1" value="1">
+        </label>
+      </div>
+
+      <div id="nuc-info" class="info"></div>
     </section>
 
     <section class="viewer-pane" aria-label="Molecule builder" id="mol-panel" hidden>
