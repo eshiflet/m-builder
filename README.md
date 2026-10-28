@@ -39,6 +39,19 @@ Switch to **Molecules** at the top, then click elements to add atoms (or pick an
   F₂ 1. O₂ and B₂ come out paramagnetic with two unpaired electrons, which a
   Lewis structure can't explain. Covers H through Cl. Use ↑/↓ to step through
   orbitals.
+- **Vibrations view:** normal modes from a valence force field
+  (`js/vibrations.js`). Bond stretches use measured force constants by bond
+  type, or Badger's rule, with stiffer cumulated C=O as in CO₂. Bend, torsion
+  and out-of-plane terms are referenced to the molecule's own geometry. The
+  mass-weighted Hessian, with translations and rotations projected out, gives
+  3N − 6 (or 3N − 5) modes, ν̃ = 1302.79·√λ cm⁻¹. IR intensities ∝ |dμ/dQ|²,
+  using Mulliken charges from the molecular-orbital calculation, so symmetry
+  rules come out right: N₂, O₂ and CO₂'s symmetric stretch are inactive, and
+  benzene has exactly 7 active modes. Typical error vs measured fundamentals is
+  1–6%: CO₂ 2%, H₂O 1.4%, CH₄ 1.7%. The spectrum is drawn over Earth's 288 K
+  thermal emission, to show why CO₂ (bend at 667 cm⁻¹), H₂O and CH₄ are
+  greenhouse gases and N₂ and O₂ aren't. Modes animate (slowed ~10¹³×,
+  exaggerated); ↑/↓ steps through them.
 - **Electron density view:** a surface of constant total electron density
   (the sum of the atoms' own clouds). The slider shows the clouds merging into
   one envelope at low density and separating into atoms at high density.
@@ -220,6 +233,7 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - `js/smiles.js`: SMILES parser (rings, branches, charges, implicit H, stereo)
 - `js/forcefield.js`: force field (including H-bonds), FIRE minimizer, conformer search, and docking
 - `js/conformer-worker.js`: runs the conformer search off the main thread
+- `js/vibrations.js`: valence force field, normal modes, IR intensities, measured reference frequencies
 - `js/eht.js`: Extended Hückel molecular orbitals (STO-3G overlaps, Jacobi eigensolver)
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI

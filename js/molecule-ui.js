@@ -1,12 +1,13 @@
 import { ELEMENTS } from './elements.js';
-import { EXAMPLES } from './molecule-data.js';
+import { EXAMPLES, KNOWN_MOLECULES, ELECTRONEGATIVITY } from './molecule-data.js';
 import {
   buildMolecule, parseFormula, hillKey, formulaHTML, chargeText,
   isomersOf, searchLibrary, entryCounts, entryCharge, smilesCounts, needsConformers, computeConformers,
 } from './molecule.js';
-import { KNOWN_MOLECULES } from './molecule-data.js';
 import { configHTML } from './electron-config.js';
 import { computeMOs, moField } from './eht.js';
+import { normalModes, MEASURED } from './vibrations.js';
+import { sci } from './nucleus-data.js';
 import { MoleculeViewer, atomColor, SIGMA_COLOR, H1S_COLOR, TRANSFER_COLOR, HBOND_COLOR } from './molecule-viewer.js';
 import { PHASE_COLORS } from './viewer.js';
 
@@ -22,6 +23,7 @@ const isoFromSlider = (v) => 10 ** (-3 + (3 * v) / 100);
 
 const VIEW_TEXT = {
   structure: 'Ball-and-stick model with bond angles. Purple lobes are lone pairs: they repel more strongly than bonding pairs, which is what bends molecules like H₂O while CO₂ stays straight.',
+  vib: 'Every molecule vibrates constantly. Small displacements behave like masses on springs, and the motion splits into independent normal modes, each with its own frequency: 3N − 6 of them for N atoms (3N − 5 if linear). Computed from a valence force field: measured bond-stretch constants (or Badger’s rule), bend, twist and out-of-plane terms; the mass-weighted Hessian is diagonalized, ν̃ = √λ / 2πc. A mode absorbs infrared light only if it changes the molecule’s dipole moment; intensities here use partial charges from the molecular-orbital calculation. Frequencies are harmonic, typically within a few percent of measured values (X–H stretches run a few percent high, since real bonds are anharmonic). Motion is slowed about 10¹³× and exaggerated.',
   mo: 'Molecular orbitals spread over the whole molecule, computed here with Extended Hückel theory (valence Slater orbitals, measured ionization energies, H<sub>ij</sub> = 1.75·S<sub>ij</sub>·(H<sub>ii</sub>+H<sub>jj</sub>)/2). Orange and blue are the two signs of the wavefunction. Where the same color joins up between two atoms, electrons there pull the atoms together (bonding); a change of sign between them, a node, pushes them apart (antibonding). Electrons fill the levels from the bottom, two per orbital with opposite spins, and one per orbital across a set of equal-energy orbitals before pairing (Hund’s rule). EHT is qualitative: shapes, orderings and bonding character are reliable, exact energies are not. Use ↑/↓ to step through the orbitals.',
   orbitals: 'Valence-bond picture. Each atom’s hybrid orbitals point along its bonds; where lobes from two atoms overlap head-on they form a σ bond. Orange/blue lobes are p orbitals that overlap side by side (orange with orange) to form π bonds. Lavender lobes are lone pairs.',
   ionicOrbitals: 'Ionic bonding shares no orbitals. The metal hands its valence electrons to the nonmetal (arrows), leaving each ion with a filled, spherical shell like a noble gas. The ions then stick together by electrostatic attraction.',
@@ -42,6 +44,8 @@ export function createMoleculeUI({ onTrayChange }) {
   let moIndex = null; // which molecular orbital is shown (default: the HOMO)
   const moIsoFromSlider = (v) => 0.005 * 40 ** (v / 100); // 0.005–0.2 bohr^−3/2
   const MO_RES = 64;
+  const vibCache = new WeakMap();
+  let vibIndex = null;
 
   $('#examples').innerHTML = EXAMPLES
     .map(({ formula, charge: q = 0, name, label }) => (name
@@ -129,9 +133,111 @@ export function createMoleculeUI({ onTrayChange }) {
     empty.innerHTML = '';
     viewer.setMolecule(mol);
     moIndex = null;
+    vibIndex = null;
     if (view === 'mo') showMO();
+    if (view === 'vib') showVibration();
     renderTitle();
     renderInfo();
+  }
+
+  // ---------- vibrations ----------
+
+  /** Partial charges for IR intensities: ionic charges, else molecular-orbital (Mulliken) charges, else electronegativity. */
+  function partialCharges() {
+    if (mol.ionic) return mol.atoms.map((a) => a.charge ?? 0);
+    const r = moData();
+    if (r && !r.error) return r.charges;
+    const q = mol.atoms.map(() => 0);
+    for (const b of mol.bonds) {
+      const d = 0.15 * ((ELECTRONEGATIVITY[mol.atoms[b.b].symbol] ?? 2) - (ELECTRONEGATIVITY[mol.atoms[b.a].symbol] ?? 2));
+      q[b.a] += d; q[b.b] -= d;
+    }
+    return q;
+  }
+
+  function vibData() {
+    if (!mol || mol.error) return null;
+    if (!vibCache.has(mol)) vibCache.set(mol, mol.atoms.length < 2 ? { modes: [] } : normalModes(mol, partialCharges()));
+    return vibCache.get(mol);
+  }
+
+  /** On-screen period: higher frequencies animate faster, compressed so all stay visible. */
+  const vibPeriod = (nu) => Math.min(3, Math.max(0.35, 1.6 * Math.sqrt(1000 / Math.max(nu, 50))));
+
+  function showVibration() {
+    const v = vibData();
+    if (!v || !v.modes.length) return;
+    if (vibIndex == null) {
+      // Start with the strongest infrared absorber, or the lowest mode if none absorb.
+      vibIndex = v.modes.reduce((best, m, k) => (m.intensity > v.modes[best].intensity ? k : best), 0);
+    }
+    viewer.setVibration(v.modes[vibIndex].disp, vibPeriod(v.modes[vibIndex].wavenumber));
+  }
+
+  /** IR spectrum (4000 → 400 cm⁻¹, as chemists draw it) over Earth's thermal emission. */
+  function irSpectrum(v) {
+    const W = 560, H = 186, x0 = 16, x1 = W - 16, yb = H - 38, yt = 10;
+    const X = (nu) => x1 - ((nu - 400) / 3600) * (x1 - x0);
+    // Planck emission per wavenumber at 288 K, B ∝ ν̃³ / (e^{hcν̃/kT} − 1), hc/k = 1.4388 cm·K.
+    const planck = (nu) => nu ** 3 / (Math.exp((1.4388 * nu) / 288) - 1);
+    const pmax = planck(565);
+    let earth = `M${X(400)},${yb}`;
+    for (let nu = 400; nu <= 4000; nu += 20) earth += `L${X(nu).toFixed(1)},${(yb - (planck(nu) / pmax) * (yb - yt) * 0.9).toFixed(1)}`;
+    earth += `L${X(4000)},${yb}Z`;
+    // Absorption: each mode a Lorentzian, width 18 cm⁻¹.
+    let curve = '';
+    for (let nu = 400; nu <= 4000; nu += 4) {
+      let a = 0;
+      for (const m of v.modes) if (m.wavenumber > 0) a += m.intensity / (1 + ((nu - m.wavenumber) / 9) ** 2);
+      curve += `${curve ? 'L' : 'M'}${X(nu).toFixed(1)},${(yb - Math.min(1, a) * (yb - yt)).toFixed(1)}`;
+    }
+    const sticks = v.modes.map((m, k) => (m.wavenumber < 380 || m.wavenumber > 4000 ? ''
+      : `<line x1="${X(m.wavenumber)}" x2="${X(m.wavenumber)}" y1="${yb}" y2="${yb - Math.max(0.04, m.intensity) * (yb - yt)}" class="ir-stick${k === vibIndex ? ' sel' : ''}${m.intensity < 0.01 ? ' dark' : ''}" data-vib="${k}"/>`)).join('');
+    const ticks = [4000, 3000, 2000, 1500, 1000, 500].map((nu) => `<line x1="${X(nu)}" x2="${X(nu)}" y1="${yb}" y2="${yb + 4}" class="ir-axis"/><text x="${X(nu)}" y="${yb + 16}" text-anchor="middle" class="ir-lbl">${nu}</text>`).join('');
+    return `<svg class="ir-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Infrared spectrum">
+      <path d="${earth}" class="ir-earth"/>
+      <text x="${x1 - 4}" y="${yt + 12}" text-anchor="end" class="ir-lbl ir-earth-lbl">Earth’s heat glow</text>
+      <path d="${curve}" class="ir-curve"/>${sticks}
+      <line x1="${x0}" x2="${x1}" y1="${yb}" y2="${yb}" class="ir-axis"/>${ticks}
+      <text x="${(x0 + x1) / 2}" y="${H - 4}" text-anchor="middle" class="ir-lbl">wavenumber (cm⁻¹) · lower energy →</text>
+    </svg>`;
+  }
+
+  const GREENHOUSE = {
+    CO2: 'CO₂’s bending vibration (≈667 cm⁻¹, 15 µm) sits right at the peak of the infrared light Earth radiates as heat, and it changes the dipole, so CO₂ absorbs it and re-emits it, partly back down: the main reason it’s a greenhouse gas. Its symmetric stretch doesn’t change the dipole and absorbs nothing.',
+    H2O: 'Water absorbs strongly across the infrared (bend ≈1595 cm⁻¹ and stretches ≈3700 cm⁻¹, plus rotations), making water vapor Earth’s largest greenhouse gas.',
+    CH4: 'Methane’s bends (≈1306 cm⁻¹) absorb in the middle of Earth’s heat glow, inside the “atmospheric window” where little else absorbs, which makes each methane molecule a far stronger greenhouse gas than CO₂.',
+    N2: 'N₂ vibrates (≈2330 cm⁻¹), but a symmetric two-atom molecule has no dipole to change, so it absorbs no infrared. That’s why the 78% of air that is nitrogen does no greenhouse warming.',
+    O2: 'O₂ has no dipole to change when it vibrates, so it absorbs no infrared, and the 21% of air that is oxygen does no greenhouse warming.',
+    N2O: 'Nitrous oxide absorbs near 1285 and 589 cm⁻¹; each molecule traps far more heat than a CO₂ molecule.',
+    O3: 'Ozone’s modes (≈1042 cm⁻¹) absorb inside the atmospheric window.',
+  };
+
+  function renderVibInfo() {
+    const v = vibData();
+    const head = `<div class="info-head"><div><h2>${mol.name ?? unnamed()} <span class="muted">· ${formulaHTML(mol.formula, mol.charge)}</span></h2>
+      <div class="muted">Vibrations · ${mol.atoms.length} atoms → ${v.modes.length} normal mode${v.modes.length === 1 ? '' : 's'}${v.linear ? ' (3N − 5, linear)' : v.modes.length ? ' (3N − 6)' : ''}</div></div></div>`;
+    if (!v.modes.length) { $('#mol-info').innerHTML = `${head}<p class="explain">A single atom has no vibrations.</p>`; return; }
+    const meas = MEASURED[mol.formula];
+    const matched = meas && meas.length === v.modes.length ? meas : null;
+    const m = v.modes[vibIndex];
+    const periodS = 1 / (2.99792458e10 * m.wavenumber);
+    const active = v.modes.filter((x) => x.intensity >= 0.01).length;
+    const rows = v.modes.map((x, k) => `<tr class="vib-row${k === vibIndex ? ' sel' : ''}" data-vib="${k}">
+      <td>${k + 1}</td><td class="num">${x.wavenumber.toFixed(0)}</td>${matched ? `<td class="num muted">${matched[k]}</td>` : ''}
+      <td>${x.label}</td><td><span class="ir-bar" style="width:${Math.round(60 * x.intensity)}px"></span>${x.intensity < 0.01 ? '<span class="muted">IR-inactive</span>' : ''}</td></tr>`).join('');
+    const err = matched ? (100 * v.modes.reduce((t, x, k) => t + Math.abs(x.wavenumber - matched[k]) / matched[k], 0) / v.modes.length) : null;
+    $('#mol-info').innerHTML = `${head}
+      ${irSpectrum(v)}
+      <p class="chart-note">Computed infrared absorption (sticks = modes; dim = IR-inactive; click to animate) over Earth’s thermal emission at 15 °C.</p>
+      <p class="explain"><b>Showing mode ${vibIndex + 1}: ${m.label}</b>, ${m.wavenumber.toFixed(0)} cm⁻¹ (${(10000 / m.wavenumber).toFixed(1)} µm). One vibration takes ${sci(periodS)} s. ${m.intensity >= 0.01
+        ? 'It changes the molecule’s dipole moment, so it absorbs infrared light.'
+        : 'It doesn’t change the dipole moment (by symmetry), so it can’t absorb infrared light, though it shows up in Raman spectra.'}</p>
+      ${GREENHOUSE[mol.formula] ? `<p class="explain">${GREENHOUSE[mol.formula]}</p>` : ''}
+      <table class="vib-table"><thead><tr><th>#</th><th>cm⁻¹</th>${matched ? '<th>measured</th>' : ''}<th>motion</th><th>IR</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="chart-note">${active} of ${v.modes.length} modes absorb infrared.${err != null ? ` Mean difference from measured: ${err.toFixed(1)}%.` : ''} Use ↑/↓ to step through modes.</p>
+      <p class="note">${VIEW_TEXT.vib}</p>`;
+    renderLegend();
   }
 
   // ---------- molecular orbitals ----------
@@ -331,6 +437,10 @@ export function createMoleculeUI({ onTrayChange }) {
   }
 
   function renderLegendBase() {
+    if (view === 'vib') {
+      $('#mol-legend').innerHTML = '<span><i style="background:#ffd75e"></i>motion path (exaggerated)</span>';
+      return;
+    }
     if (view === 'mo') {
       $('#mol-legend').innerHTML = `<span><i style="background:${PHASE_COLORS.pos}"></i>ψ &gt; 0</span><span><i style="background:${PHASE_COLORS.neg}"></i>ψ &lt; 0</span>`;
       return;
@@ -401,6 +511,7 @@ export function createMoleculeUI({ onTrayChange }) {
 
   function renderInfo() {
     if (view === 'mo') return renderMOInfo();
+    if (view === 'vib') return renderVibInfo();
     const { atoms, bonds } = mol;
     const allAngles = viewer.showsAllAngles;
     const angles = allAngles ? mol.angles : mol.angles.filter((a) => a.vertex === viewer.selected);
@@ -546,10 +657,13 @@ export function createMoleculeUI({ onTrayChange }) {
     viewer.setOption('angles', view === 'structure');
     viewer.setView(view);
     if (view === 'mo') showMO();
+    if (view === 'vib') showVibration();
     if (mol && !mol.error) renderInfo();
   });
 
   $('#mol-info').addEventListener('click', (e) => {
+    const vib = e.target.closest('[data-vib]');
+    if (vib) { vibIndex = +vib.dataset.vib; showVibration(); renderInfo(); return; }
     const level = e.target.closest('[data-mo]');
     if (!level) return;
     moIndex = +level.dataset.mo;
@@ -560,6 +674,16 @@ export function createMoleculeUI({ onTrayChange }) {
   const showMoIso = () => { $('#mo-iso-value').textContent = moIsoFromSlider(+moIso.value).toFixed(3); };
   moIso.addEventListener('input', () => { showMoIso(); if (view === 'mo') showMO(); });
   showMoIso();
+  document.addEventListener('keydown', (e) => {
+    if (view !== 'vib' || $('#mol-panel').hidden || e.target.matches('input, textarea')) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const v = vibData();
+    if (!v?.modes.length) return;
+    vibIndex = Math.max(0, Math.min(v.modes.length - 1, vibIndex + (e.key === 'ArrowUp' ? 1 : -1)));
+    showVibration();
+    renderInfo();
+    e.preventDefault();
+  });
   document.addEventListener('keydown', (e) => {
     if (view !== 'mo' || $('#mol-panel').hidden || e.target.matches('input, textarea')) return;
     const r = moData();

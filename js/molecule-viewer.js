@@ -131,7 +131,7 @@ export class MoleculeViewer {
     this.controls.autoRotateSpeed = 1.0;
 
     this.groups = {};
-    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges', 'hbonds', 'mo']) {
+    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges', 'hbonds', 'mo', 'vib']) {
       this.groups[name] = new THREE.Group();
       this.scene.add(this.groups[name]);
     }
@@ -161,8 +161,80 @@ export class MoleculeViewer {
   }
 
   setActive(on) {
-    this.renderer.setAnimationLoop(on ? () => { this.controls.update(); this.renderer.render(this.scene, this.camera); } : null);
-    if (on) this.#resize();
+    this.clock ??= new THREE.Clock();
+    this.renderer.setAnimationLoop(on ? () => {
+      const dt = Math.min(this.clock.getDelta(), 0.05);
+      if (this.view === 'vib') this.#tickVibration(dt);
+      this.controls.update();
+      this.renderer.render(this.scene, this.camera);
+    } : null);
+    if (on) { this.clock.getDelta(); this.#resize(); }
+  }
+
+  // ---------- vibrations ----------
+
+  /** Animate a normal mode: disp is the Cartesian displacement (max 1), period in seconds. */
+  setVibration(disp, period) {
+    const g = this.groups.vib;
+    const { atoms, bonds } = this.mol;
+    if (this.vibMol !== this.mol) {
+      this.#clear(g);
+      this.vibMol = this.mol;
+      const n = atoms.length;
+      this.vibBalls = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.05 }), n);
+      atoms.forEach((a, i) => this.vibBalls.setColorAt(i, new THREE.Color(atomColor(a.symbol))));
+      this.vibSticks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 12), new THREE.MeshStandardMaterial({ roughness: 0.4 }), Math.max(1, bonds.length * 2));
+      bonds.forEach((b, k) => {
+        this.vibSticks.setColorAt(2 * k, new THREE.Color(atomColor(atoms[b.a].symbol)));
+        this.vibSticks.setColorAt(2 * k + 1, new THREE.Color(atomColor(atoms[b.b].symbol)));
+      });
+      for (const m of [this.vibBalls, this.vibSticks]) m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.vibPaths = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: '#ffd75e', transparent: true, opacity: 0.6 }));
+      g.add(this.vibBalls, this.vibSticks, this.vibPaths);
+    }
+    this.vibDisp = disp;
+    this.vibPeriod = period;
+    this.vibPhase = 0;
+    // Each atom's path: a short line through its rest position along its motion.
+    const AMP = 0.25; // Å at the most-displaced atom (exaggerated)
+    const pts = [];
+    atoms.forEach((a, i) => {
+      const d = new THREE.Vector3(disp[3 * i], disp[3 * i + 1], disp[3 * i + 2]).multiplyScalar(AMP);
+      if (d.length() < 0.01) return;
+      const p = v3(a.pos);
+      pts.push(p.clone().sub(d), p.clone().add(d));
+    });
+    this.vibPaths.geometry.dispose();
+    this.vibPaths.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+    this.#tickVibration(0);
+  }
+
+  #tickVibration(dt) {
+    if (!this.vibDisp || this.vibMol !== this.mol) return;
+    this.vibPhase += (2 * Math.PI * dt) / this.vibPeriod;
+    const s = 0.25 * Math.sin(this.vibPhase);
+    const { atoms, bonds } = this.mol;
+    const P = atoms.map((a, i) => new THREE.Vector3(
+      a.pos[0] + s * this.vibDisp[3 * i], a.pos[1] + s * this.vibDisp[3 * i + 1], a.pos[2] + s * this.vibDisp[3 * i + 2]));
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    atoms.forEach((a, i) => {
+      const r = ballRadius(a) * 0.8;
+      m.compose(P[i], q.identity(), sc.set(r, r, r));
+      this.vibBalls.setMatrixAt(i, m);
+    });
+    bonds.forEach((b, k) => {
+      const A = P[b.a], B = P[b.b], mid = A.clone().lerp(B, 0.5);
+      const dir = B.clone().sub(A);
+      const L = dir.length() / 2;
+      q.setFromUnitVectors(Y, dir.normalize());
+      const rad = b.ionic ? 0.03 : 0.07;
+      m.compose(A.clone().lerp(mid, 0.5), q, sc.set(rad, L, rad));
+      this.vibSticks.setMatrixAt(2 * k, m);
+      m.compose(mid.clone().lerp(B, 0.5), q, sc.set(rad, L, rad));
+      this.vibSticks.setMatrixAt(2 * k + 1, m);
+    });
+    this.vibBalls.instanceMatrix.needsUpdate = true;
+    this.vibSticks.instanceMatrix.needsUpdate = true;
   }
 
   #resize() {
@@ -190,6 +262,7 @@ export class MoleculeViewer {
     for (const [name, g] of Object.entries(this.groups)) {
       if (name === 'density' && this.mc) { g.remove(this.mc); }
       if (name === 'mo') this.moKey = null;
+      if (name === 'vib') { this.vibMol = null; this.vibDisp = null; }
       this.#clear(g);
     }
     if (!mol) return;
@@ -607,15 +680,17 @@ export class MoleculeViewer {
     const v = this.view;
     const G = this.groups;
     G.structure.visible = v === 'structure';
-    G.skeleton.visible = v !== 'structure';
+    G.skeleton.visible = v !== 'structure' && v !== 'vib';
     G.lonePairs.visible = v === 'structure' && this.options.lonePairs;
     G.orbitals.visible = v === 'orbitals';
     G.density.visible = v === 'density';
     G.mo.visible = v === 'mo';
-    G.angles.visible = this.options.angles;
-    G.hbonds.visible = this.options.hbonds;
+    G.vib.visible = v === 'vib';
+    G.angles.visible = this.options.angles && v !== 'vib';
+    G.hbonds.visible = this.options.hbonds && v !== 'vib';
     for (const o of G.hbonds.children) if (o.userData.isLengthLabel) o.visible = this.options.lengths;
-    G.lengths.visible = this.options.lengths;
+    G.lengths.visible = this.options.lengths && v !== 'vib';
+    G.charges.visible = v !== 'vib'; // static labels wouldn't follow the vibrating atoms
   }
 
   fit() {

@@ -259,9 +259,19 @@ export function computeMOs(mol) {
     const ae = mos.reduce((t, m) => t + (m.kind === 'antibonding' ? m.occ : 0), 0);
     bondOrder = (be - ae) / 2;
   }
+  // Mulliken charges: valence electrons minus the atom's gross population Σ_μ∈A Σ_ν P_μν S_μν.
+  const charges = atoms.map((a) => VALENCE[a.symbol]);
+  for (const m of mos) {
+    if (!m.occ) continue;
+    for (let i = 0; i < n; i++) {
+      let t = 0;
+      for (let j = 0; j < n; j++) t += m.c[j] * S[i * n + j];
+      charges[basis[i].atom] -= m.occ * m.c[i] * t;
+    }
+  }
   // Atomic orbital levels for the correlation diagram (one entry per shell per atom).
   const aoLevels = atoms.map((a, i) => ({ atom: i, symbol: a.symbol, shells: EHT_PARAMS[a.symbol].map(([nn, l, Hii]) => ({ name: `${nn}${'sp'[l]}`, energy: Hii })) }));
-  return { basis, mos, homo, lumo: homo + 1 < mos.length ? homo + 1 : null, electrons, unpaired, bondOrder, aoLevels, geo };
+  return { basis, mos, homo, lumo: homo + 1 < mos.length ? homo + 1 : null, electrons, unpaired, bondOrder, aoLevels, geo, charges };
 }
 
 function shapeFrame(atoms) {
