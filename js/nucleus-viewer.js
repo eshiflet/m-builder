@@ -32,6 +32,13 @@ const NUCLEON_R = 1.08;
 const CLOSE_PAIR = 1.0;
 export const PAIR_COLOR = '#ff9f43';
 
+// Pions, the lightest mesons, carry the strong force between nucleons (Yukawa).
+// A virtual pion lives about ħ/(m_π c²) = 6.58×10⁻²² MeV·s / 139.6 MeV ≈ 0.47 bs and
+// reaches about ħ/(m_π c) ≈ 1.4 fm, so only near neighbors exchange them.
+export const PION_COLORS = { '+': '#ff6bd6', '-': '#7dff6b', 0: '#e6e6e6' };
+const PION_RANGE = 2.0; // fm, center to center, for picking an exchange partner
+const PION_FLIGHT = 0.7; // seconds on screen per exchange (real: ~0.5 bs, slowed to be visible)
+
 function textSprite(text, color, height) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -140,6 +147,7 @@ export class NucleusViewer {
     this.showField = false;
     this.showRuler = true;
     this.showPairs = false;
+    this.showMesons = false;
     this.timeRate = 4; // babyseconds per real second
     this.spin = 10;
     this.t = 0; // clock, in babyseconds
@@ -165,7 +173,7 @@ export class NucleusViewer {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.pixelScale = this.renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2));
-    for (const m of [this.coreMat, this.haloMat]) if (m) m.uniforms.uScale.value = this.pixelScale;
+    for (const m of [this.coreMat, this.haloMat, this.mesonCoreMat, this.mesonHaloMat]) if (m) m.uniforms.uScale.value = this.pixelScale;
   }
 
   #disposeGroup(group) {
@@ -284,6 +292,25 @@ export class NucleusViewer {
     this.pairLines.renderOrder = 5;
     this.nucleusGroup.add(this.pairLines);
     this.pairStats = { total: 0, pn: 0, frames: 0 };
+
+    // Mesons in flight: glowing points between the nucleons exchanging them.
+    const maxMesons = Math.max(8, Math.ceil(A / 2));
+    this.mesonGeo = new THREE.BufferGeometry();
+    this.mesonGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(maxMesons * 3), 3));
+    this.mesonGeo.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(maxMesons * 3), 3));
+    this.mesonGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 100);
+    this.mesonGeo.setDrawRange(0, 0);
+    const mesonUniforms = (size) => ({ uScale: { value: this.pixelScale }, uSize: { value: size }, uOpacity: { value: 1 } });
+    this.mesonCoreMat = new THREE.ShaderMaterial({ vertexShader: GLOW_VERT, fragmentShader: CORE_FRAG, uniforms: mesonUniforms(0.7), transparent: true, depthTest: false });
+    this.mesonHaloMat = new THREE.ShaderMaterial({ vertexShader: GLOW_VERT, fragmentShader: HALO_FRAG, uniforms: mesonUniforms(2.6), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
+    this.mesonPoints = new THREE.Group();
+    const mc = new THREE.Points(this.mesonGeo, this.mesonCoreMat), mh = new THREE.Points(this.mesonGeo, this.mesonHaloMat);
+    mc.renderOrder = 7; mh.renderOrder = 6;
+    this.mesonPoints.add(mh, mc);
+    this.nucleusGroup.add(this.mesonPoints);
+    this.mesons = [];
+    this.busy = new Uint8Array(A);
+    this.mesonCount = { '+': 0, '-': 0, 0: 0 };
 
     this.#buildRuler();
     this.statsTimer = 0;
@@ -446,6 +473,12 @@ export class NucleusViewer {
   setField(on) { this.showField = on; this.#applyVisibility(); }
   setRuler(on) { this.showRuler = on; this.#applyVisibility(); }
   setPairs(on) { this.showPairs = on; this.#applyVisibility(); }
+
+  setMesons(on) {
+    if (!on) this.#finishMesons(); // complete exchanges in flight so the charge adds up
+    this.showMesons = on;
+    this.#applyVisibility();
+  }
   setStyle(style) { this.style = style; this.#applyVisibility(); }
   setAutoRotate(on) { this.controls.autoRotate = on; }
 
@@ -474,6 +507,7 @@ export class NucleusViewer {
     this.quarks.visible = this.gluons.visible = this.showQuarks;
     this.fieldP.visible = this.fieldN.visible = this.showField;
     this.pairLines.visible = this.showPairs;
+    this.mesonPoints.visible = this.showMesons;
   }
 
   // ---------- single nucleon close-up ----------
@@ -674,6 +708,7 @@ export class NucleusViewer {
       if (recolor) this.#colorQuarks();
     }
 
+    if (this.showMesons) this.#updateMesons(out, dt);
     this.#updatePairs(out);
     this.onClock?.(this.t, this.lagging);
     this.statsTimer += dt;
@@ -682,6 +717,91 @@ export class NucleusViewer {
       this.onStats(this.#stats());
     }
   }
+
+  // ---------- pion exchange ----------
+
+  /** Make nucleon i a proton or a neutron (charge exchange), and recolor it. */
+  #setIdentity(i, proton) {
+    this.isProton[i] = proton ? 1 : 0;
+    const c = new THREE.Color(proton ? PROTON_COLOR : NEUTRON_COLOR);
+    c.toArray(this.baseColors, 3 * i);
+    c.toArray(this.pointGeo.attributes.aColor.array, 3 * i);
+    this.pointGeo.attributes.aColor.needsUpdate = true;
+    this.solids.setColorAt(i, c);
+    this.solids.instanceColor.needsUpdate = true;
+  }
+
+  /** Start a pion exchange between two neighbors, choosing its charge. */
+  #emit(out) {
+    const n = out.length / 3;
+    const i = Math.floor(Math.random() * n);
+    if (this.busy[i] || this.inHalo[i]) return;
+    const r2max = PION_RANGE * PION_RANGE;
+    let j = -1;
+    for (let tries = 0; tries < 40; tries++) {
+      const k = Math.floor(Math.random() * n);
+      if (k === i || this.busy[k] || this.inHalo[k]) continue;
+      const dx = out[3 * i] - out[3 * k], dy = out[3 * i + 1] - out[3 * k + 1], dz = out[3 * i + 2] - out[3 * k + 2];
+      if (dx * dx + dy * dy + dz * dz < r2max) { j = k; break; }
+    }
+    if (j < 0) return;
+    // Proton → neutron + π⁺, or neutron → proton + π⁻, swaps a p–n pair's identities;
+    // π⁰ leaves them alone. For a p–n pair, charged exchange is twice as likely (isospin).
+    const pi = this.isProton[i], pj = this.isProton[j];
+    let type = 0;
+    if (pi !== pj && Math.random() < 2 / 3) type = pi ? '+' : '-';
+    if (type === '+') this.#setIdentity(i, false);
+    if (type === '-') this.#setIdentity(i, true);
+    this.busy[i] = this.busy[j] = 1;
+    this.mesons.push({ i, j, type, age: 0, lift: (Math.random() - 0.5) * 0.9 });
+  }
+
+  #updateMesons(out, dt) {
+    // Keep roughly a quarter of the nucleons busy exchanging at any moment.
+    const target = Math.max(1, Math.round(out.length / 3 / 4));
+    for (let k = 0; k < 4 && this.mesons.length < target; k++) this.#emit(out);
+
+    const pos = this.mesonGeo.attributes.position.array;
+    const col = this.mesonGeo.attributes.aColor.array;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), side = new THREE.Vector3(), c = new THREE.Color();
+    const still = [];
+    for (const m of this.mesons) {
+      m.age += dt / PION_FLIGHT;
+      if (m.age >= 1) { this.#absorb(m); continue; }
+      still.push(m);
+    }
+    this.mesons = still;
+    still.forEach((m, k) => {
+      if (k >= pos.length / 3) return;
+      a.fromArray(out, 3 * m.i);
+      b.fromArray(out, 3 * m.j);
+      // A gentle arc from emitter to absorber.
+      side.subVectors(b, a).cross(new THREE.Vector3(0.3, 0.5, 0.8)).normalize();
+      const s = m.age;
+      a.lerp(b, s).addScaledVector(side, m.lift * Math.sin(Math.PI * s));
+      a.toArray(pos, 3 * k);
+      c.set(PION_COLORS[m.type]).toArray(col, 3 * k);
+    });
+    this.mesonGeo.setDrawRange(0, Math.min(still.length, pos.length / 3));
+    this.mesonGeo.attributes.position.needsUpdate = true;
+    this.mesonGeo.attributes.aColor.needsUpdate = true;
+  }
+
+  #absorb(m) {
+    if (m.type === '+') this.#setIdentity(m.j, true);
+    if (m.type === '-') this.#setIdentity(m.j, false);
+    this.busy[m.i] = this.busy[m.j] = 0;
+    this.mesonCount[m.type]++;
+  }
+
+  #finishMesons() {
+    for (const m of this.mesons ?? []) this.#absorb(m);
+    this.mesons = [];
+    this.mesonGeo?.setDrawRange(0, 0);
+  }
+
+  /** Exchanges completed so far, by pion charge. */
+  get pionExchanges() { return this.mesonCount ?? { '+': 0, '-': 0, 0: 0 }; }
 
   /** Find pairs closer than CLOSE_PAIR; draw them and keep running counts. */
   #updatePairs(out) {

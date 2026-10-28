@@ -120,6 +120,14 @@ short-range correlated pairs, ~90% of them proton–neutron because of the tenso
 force. This simulation has no tensor force, so its pairs follow simple
 combinatorics, and the panel says so.
 
+**Mesons** shows the strong force at work. Neighboring nucleons (within
+~2 fm) toss pions back and forth: π⁺ (pink), π⁻ (green) and π⁰ (white). A
+virtual pion lives about ħ/m_πc² ≈ 0.5 babyseconds and reaches about 1.4 fm.
+Charged pions swap identities (p → n + π⁺, then π⁺ + n → p), so protons and
+neutrons keep trading places while the total charge stays fixed. For a p–n pair,
+charged exchange is twice as likely as π⁰ (isospin). Exchanges are slowed down to
+be visible, and the panel counts them.
+
 **Ground-state shape** comes from the Nilsson–Strutinsky
 (macroscopic–microscopic) method in `js/nuclear-shape.js`:
 

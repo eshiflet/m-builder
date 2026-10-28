@@ -4,7 +4,7 @@ import {
   isotopeFor, bindingEnergy, deformation, collectiveModes, radiusFm, isMagic, sci, densityRadii,
   allowedNeutrons, rotationPeriod, valenceCounts, BABYSECOND, NUCLEONS, QUARKS,
 } from './nucleus-data.js';
-import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, COLOR_CHARGES } from './nucleus-viewer.js';
+import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, PION_COLORS, COLOR_CHARGES } from './nucleus-viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -129,6 +129,12 @@ export function createNucleusUI() {
   }
 
   function renderStats() {
+    const pc = $('#nuc-pion-count');
+    if (pc && viewer.showMesons) {
+      const c = viewer.pionExchanges;
+      const total = c['+'] + c['-'] + c[0];
+      pc.textContent = total ? `Exchanges so far: ${total} (π⁺ ${c['+']}, π⁻ ${c['-']}, π⁰ ${c[0]}): ${c['+'] + c['-']} of them swapped a proton and a neutron.` : '';
+    }
     const el = $('#nuc-live');
     if (!el || !stats || view !== 'nucleus') return;
     const skin = stats.rn - stats.rp;
@@ -146,7 +152,7 @@ export function createNucleusUI() {
       b.title = m === 'auto' ? 'Pick the motion that suits each nucleus' : m === 'none' ? '' : modes[m] ? `${energyText(modes[m].E)} · ${m === 'rotation' ? 'see spin' : bsText(modes[m].T)}`
         : m === 'rotation' ? 'Only deformed nuclei rotate' : 'Needs at least 4 nucleons';
     });
-    for (const id of ['nuc-mode-wrap', 'nuc-quarks-wrap', 'nuc-motion-wrap', 'nuc-iso-wrap', 'nuc-rate-wrap', 'nuc-extra-wrap']) $(`#${id}`).hidden = view !== 'nucleus';
+    for (const id of ['nuc-mode-wrap', 'nuc-quarks-wrap', 'nuc-mesons-wrap', 'nuc-motion-wrap', 'nuc-iso-wrap', 'nuc-rate-wrap', 'nuc-extra-wrap']) $(`#${id}`).hidden = view !== 'nucleus';
     $('#nuc-spin-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
     $('#nuc-clock').hidden = view !== 'nucleus';
     const ns = allowedNeutrons(iso.Z);
@@ -157,6 +163,7 @@ export function createNucleusUI() {
       ? `<span><i style="background:${PROTON_COLOR}"></i>proton</span><span><i style="background:${NEUTRON_COLOR}"></i>neutron</span>${
         iso.halo ? `<span><i style="background:${HALO_COLOR}"></i>halo ${iso.halo.kind === 'n' ? 'neutron' : 'proton'}</span>` : ''}${
         viewer.showPairs ? `<span><i style="background:${PAIR_COLOR}"></i>close pair</span>` : ''}${
+        viewer.showMesons ? `<span><i style="background:${PION_COLORS['+']}"></i>π⁺</span><span><i style="background:${PION_COLORS['-']}"></i>π⁻</span><span><i style="background:${PION_COLORS[0]}"></i>π⁰</span>` : ''}${
         viewer.showQuarks ? COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]} quark</span>`).join('') : ''}`
       : `${COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]}</span>`).join('')}<span><i style="background:#ffe9a8"></i>gluon</span><span><i style="background:#9ef0ff"></i>sea quark pair</span>`;
 
@@ -206,6 +213,8 @@ export function createNucleusUI() {
       ${haloText}
       <p class="explain">The nucleons move on their own: confined to a few femtometers, they travel at about a fifth to a third of the speed of light, crossing this nucleus in roughly ${Math.max(1, Math.round((2 * R) / (0.25 * 3))).toLocaleString()} babyseconds (1 babysecond = 10⁻²³ s, the time light takes to cross 3 fm). The ruler’s photon moves at light speed for comparison.</p>
       <p class="explain"><b>Nucleons overlap.</b> They’re drawn at 1.08 fm, the size of a uniform ball with the proton’s measured charge radius (0.84 fm). Neighbors sit only ~1.8 fm apart, so their fuzzy edges overlap; they have no hard surface. The strong force between them is carried by pions, with a range of about 1.4 fm (ħ/m<sub>π</sub>c), so each nucleon really only feels the few it touches.</p>
+      ${viewer.showMesons ? `<p class="explain"><b>Mesons: how the strong force works between nucleons.</b> Nucleons attract by tossing pions back and forth (Hideki Yukawa’s 1935 idea). A pion is a quark–antiquark pair: π⁺ = u d̄, π⁻ = d ū, π⁰ = a mix of u ū and d d̄. Its mass (140 MeV/c²) sets the force’s reach: a borrowed pion can only exist for about ħ/m<sub>π</sub>c² ≈ 4.7×10⁻²⁴ s (half a babysecond), long enough to travel ħ/m<sub>π</sub>c ≈ 1.4 fm, so only touching neighbors trade them. Watch the charged ones: when a proton throws a π⁺ it becomes a neutron, and the neutron that catches it becomes a proton (p → n + π⁺, then π⁺ + n → p). So protons and neutrons are constantly swapping identities, and the total charge never changes. Heavier mesons do other jobs, e.g. the ω meson makes the short-range repulsion that keeps nucleons from merging. Exchanges here are slowed down a lot so you can follow them.</p>
+      <p class="explain muted" id="nuc-pion-count"></p>` : ''}
       <p class="explain"><b>Short-range correlated pairs.</b> About 20% of the time, two nucleons get much closer than their size, deep into each other, before the strong repulsive core below ~0.5 fm pushes them apart. Electron-scattering experiments (Jefferson Lab, with MIT’s nuclear physics group) find these pairs are ~90% proton–neutron, because of the tensor part of the nuclear force, and they’re linked to quarks behaving differently inside nuclei (the EMC effect). Turn on <b>Close pairs</b> to highlight nucleons closer than 1 fm. This simulation has no tensor force, so its pairs come out roughly as often for any combination; the live share it reports shows that difference from the real ~90%.</p>
       <div class="facts">
         <div><h3>Shape</h3><ul>
@@ -298,6 +307,7 @@ export function createNucleusUI() {
   $('#nuc-field').addEventListener('change', (e) => viewer.setField(e.target.checked));
   $('#nuc-ruler').addEventListener('change', (e) => viewer.setRuler(e.target.checked));
   $('#nuc-pairs').addEventListener('change', (e) => { viewer.setPairs(e.target.checked); render(); });
+  $('#nuc-mesons').addEventListener('change', (e) => { viewer.setMesons(e.target.checked); render(); });
   $('#nuc-rotate').addEventListener('change', (e) => viewer.setAutoRotate(e.target.checked));
   const rate = $('#nuc-rate');
   function showRate() {
