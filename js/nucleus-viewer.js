@@ -357,6 +357,12 @@ export class NucleusViewer {
   #well(i, t, d = this.#drive(t)) {
     const { iso, radii } = this;
     const proton = this.isProton[i];
+    const ev = this.event;
+    if (ev && ev.cluster[i] >= 0) {
+      // During a decay or reaction, each fragment has its own spherical well that can move.
+      const c = ev.clusters[ev.cluster[i]];
+      return { R: c.R, a: 0.5, V: V0, beta: 0, shift: 0, kT: KT, center: c.center };
+    }
     if (this.inHalo?.[i]) {
       // A loosely bound halo nucleon (see #step): its density outside the core falls off as
       // e^{−2κr}/r², set by how weakly it's bound; the core's interior is mostly Pauli-blocked.
@@ -370,6 +376,305 @@ export class NucleusViewer {
     // Dipole: protons and neutrons move oppositely, keeping the center of mass fixed.
     const shift = proton ? (d.shift * iso.N) / A : (-d.shift * iso.Z) / A;
     return { R, a: radii.a, V: V0, beta: d.beta, shift, kT: KT };
+  }
+
+  // ---------- decays and reactions ----------
+
+  /**
+   * Play a decay or reaction. info.type: 'α', 'β⁻', 'β⁺', 'EC', 'fission', 'fusion'.
+   * Extra fields: fission { labels: [heavy, light], neutrons, split: fraction of A in the
+   * heavy fragment }, fusion { scene: { iso, radii } }. Captions go to onEventCaption;
+   * onEventEnd fires when it's over.
+   */
+  startEvent(info) {
+    if (this.event) this.stopEvent(true);
+    this.savedNucleus = [this.iso, this.beta, this.radii, this.periods, this.E2];
+    if (info.type === 'fusion') this.setNucleus(info.scene.iso, 0, info.scene.radii, {}, null);
+    const A = this.iso.A;
+    this.savedMode = this.mode;
+    this.mode = 'none';
+    this.savedRate = this.timeRate;
+    this.timeRate = Math.min(this.timeRate, 6); // the event is scripted in real time; keep the jostling natural
+    // Directions across the screen, so emitted particles and fragments stay in view.
+    this.camera.updateMatrixWorld();
+    this.screenRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).normalize();
+    this.screenUp = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1).normalize();
+    this.event = {
+      ...info, stage: 0, stageT: 0,
+      cluster: new Int8Array(A).fill(-1), clusters: [], scripted: new Uint8Array(A),
+      group: new THREE.Group(), particles: [],
+    };
+    this.nucleusGroup.add(this.event.group);
+    ({ 'α': () => this.#setupAlpha(), 'β⁻': () => this.#setupBeta(-1), 'β⁺': () => this.#setupBeta(1), EC: () => this.#setupBeta(1, true),
+      fission: () => this.#setupFission(), fusion: () => this.#setupFusion() })[info.type]();
+    this.#enterStage();
+  }
+
+  /** End the event; with restore, go back to the original nucleus. */
+  stopEvent(restore = true) {
+    const ev = this.event;
+    if (!ev) return;
+    this.#disposeGroup(ev.group);
+    this.nucleusGroup.remove(ev.group);
+    this.event = null;
+    this.mode = this.savedMode ?? 'none';
+    if (this.savedRate) this.timeRate = this.savedRate;
+    if (restore && this.savedNucleus) this.setNucleus(...this.savedNucleus);
+    this.savedNucleus = null;
+    this.onEventCaption?.('');
+  }
+
+  get eventPlaying() { return !!this.event; }
+
+  #enterStage() {
+    const ev = this.event;
+    const st = ev.stages[ev.stage];
+    if (!st) { this.onEventCaption?.(ev.endCaption ?? ''); this.onEventEnd?.(ev); ev.finished = true; return; }
+    ev.stageT = 0;
+    st.enter?.();
+    this.onEventCaption?.(st.caption ?? '');
+  }
+
+  #tickEvent(dt) {
+    const ev = this.event;
+    if (ev.finished) { ev.idle?.(dt); return; }
+    const st = ev.stages[ev.stage];
+    ev.stageT += dt;
+    const u = Math.min(1, ev.stageT / st.duration);
+    st.update?.(u, dt);
+    if (u >= 1) { ev.stage++; this.#enterStage(); }
+  }
+
+  /** A small glowing particle (electron, neutrino, free neutron…) with a fading trail. */
+  #particle(color, radius = 0.35) {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), new THREE.MeshBasicMaterial({ color }));
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(30 * 3), 3));
+    const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 }));
+    trail.frustumCulled = false;
+    this.event.group.add(mesh, trail);
+    const p = { mesh, trail, history: [] };
+    p.moveTo = (v) => {
+      mesh.position.copy(v);
+      p.history.push(v.clone());
+      if (p.history.length > 30) p.history.shift();
+      const arr = trailGeo.attributes.position.array;
+      p.history.forEach((h, k) => arr.set([h.x, h.y, h.z], k * 3));
+      trailGeo.setDrawRange(0, p.history.length);
+      trailGeo.attributes.position.needsUpdate = true;
+    };
+    return p;
+  }
+
+  #label(text, color = '#ffffff') {
+    const sprite = textSprite(text, color, 1.6);
+    this.event.group.add(sprite);
+    return sprite;
+  }
+
+  #tint(i, color) {
+    const c = color ? new THREE.Color(color) : new THREE.Color().fromArray(this.baseColors, 3 * i);
+    c.toArray(this.pointGeo.attributes.aColor.array, 3 * i);
+    this.pointGeo.attributes.aColor.needsUpdate = true;
+    this.solids.setColorAt(i, c);
+    this.solids.instanceColor.needsUpdate = true;
+  }
+
+  /** Nucleons of one kind nearest a point, excluding ones already taken. */
+  #nearest(point, proton, count, taken) {
+    const { pos, isProton, inHalo } = this;
+    const idx = [];
+    for (let i = 0; i < pos.length / 3; i++) if (isProton[i] === proton && !taken.has(i) && !inHalo[i]) idx.push(i);
+    idx.sort((a, b) => Math.hypot(pos[3 * a] - point.x, pos[3 * a + 1] - point.y, pos[3 * a + 2] - point.z)
+      - Math.hypot(pos[3 * b] - point.x, pos[3 * b + 1] - point.y, pos[3 * b + 2] - point.z));
+    return idx.slice(0, count);
+  }
+
+  #zoom(factor) {
+    const dir = this.camera.position.clone().sub(this.controls.target);
+    this.camera.position.copy(this.controls.target).addScaledVector(dir, factor);
+  }
+
+  // α decay: a 2p+2n cluster forms, rattles against the Coulomb barrier, tunnels out.
+  #setupAlpha() {
+    const ev = this.event;
+    const R = this.radii.Rp;
+    const u = this.screenRight.clone().multiplyScalar(0.9).addScaledVector(this.screenUp, 0.4).normalize();
+    const taken = new Set();
+    const members = [...this.#nearest(u.clone().multiplyScalar(R - 1), 1, 2, taken), ...this.#nearest(u.clone().multiplyScalar(R - 1), 0, 2, taken)];
+    members.forEach((i) => { ev.scripted[i] = 1; });
+    const start = members.map((i) => new THREE.Vector3().fromArray(this.pos, 3 * i));
+    const offsets = [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]].map((o) => new THREE.Vector3(...o).multiplyScalar(0.62));
+    const center = new THREE.Vector3();
+    let spin = 0;
+    const place = (blend) => members.forEach((i, k) => {
+      const target = offsets[k].clone().applyAxisAngle(new THREE.Vector3(0, 0, 1), spin).add(center);
+      const p = blend < 1 ? start[k].clone().lerp(target, blend) : target;
+      this.pos.set([p.x, p.y, p.z], 3 * i);
+    });
+    // The Coulomb barrier, drawn as a faint glowing shell just outside the surface.
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(R + 1.2, 48, 32), new THREE.MeshBasicMaterial({ color: '#ff9f43', transparent: true, opacity: 0, side: THREE.BackSide, depthWrite: false }));
+    ev.group.add(shell);
+    const r = (x) => center.copy(u).multiplyScalar(x);
+    const knocks = 4;
+    ev.stages = [
+      { duration: 1.8, caption: ev.captions[0], update: (s) => { r(R - 1.6); spin += 0.02; place(s * s * (3 - 2 * s)); } },
+      { duration: 3.4, caption: ev.captions[1], enter: () => { shell.material.opacity = 0.18; },
+        update: (s) => { const ph = s * knocks * Math.PI * 2; r(R - 2.6 + 1.9 * (0.5 - 0.5 * Math.cos(ph))); spin += 0.04; place(1); } },
+      { duration: 1.4, caption: ev.captions[2], enter: () => members.forEach((i) => this.#tint(i, '#ffd75e')),
+        update: (s) => { r(R - 0.7 + 3.8 * s); spin += 0.04; place(1); shell.material.opacity = 0.18 + 0.25 * Math.sin(Math.PI * s); } },
+      { duration: 2.8, caption: ev.captions[3], enter: () => { shell.material.opacity = 0.05; members.forEach((i) => this.#tint(i, null)); },
+        update: (s) => { r(R + 3.1 + 30 * s * s); spin += 0.03; place(1); this.#zoom(1 + 0.004); } },
+    ];
+  }
+
+  // β decay: one nucleon changes identity, emitting a lepton and a (anti)neutrino.
+  // sign −1: β⁻ (n → p + e⁻ + ν̄); +1: β⁺ (p → n + e⁺ + ν); EC: p + e⁻ → n + ν.
+  #setupBeta(sign, capture = false) {
+    const ev = this.event;
+    const proton = sign > 0 ? 1 : 0;
+    const [i] = this.#nearest(new THREE.Vector3(0.3, 0.2, 0.4), proton, 1, new Set());
+    ev.scripted[i] = 0; // it stays in the nucleus
+    const at = () => new THREE.Vector3().fromArray(this.pos, 3 * i);
+    const lepton = this.#particle(sign < 0 ? '#7dff6b' : '#ff6bd6', 0.4);
+    const neutrino = this.#particle('#d8e4ff', 0.25);
+    lepton.mesh.visible = neutrino.mesh.visible = false;
+    const d1 = this.screenRight.clone().addScaledVector(this.screenUp, 0.3).normalize();
+    const d2 = this.screenRight.clone().negate().addScaledVector(this.screenUp, 0.5).normalize();
+    const R = this.radii.Rp;
+    const incoming = this.screenRight.clone().negate().addScaledVector(this.screenUp, -0.4).normalize();
+    ev.stages = [
+      ...(capture ? [{ duration: 1.8, caption: ev.captions[0], enter: () => { lepton.mesh.visible = true; },
+        update: (s) => { lepton.moveTo(at().addScaledVector(incoming, (R + 14) * (1 - s))); this.#tint(i, s > 0.5 ? '#ffd75e' : null); } }] : []),
+      { duration: 1.4, caption: ev.captions[capture ? 1 : 0], update: (s) => this.#tint(i, Math.sin(s * Math.PI * 6) > 0 ? '#ffd75e' : null) },
+      { duration: 1.0, caption: ev.captions[capture ? 2 : 1], enter: () => {
+        this.#setIdentity(i, !proton);
+        this.#tint(i, '#ffd75e');
+        if (!capture) { lepton.mesh.visible = true; lepton.moveTo(at()); }
+        else lepton.mesh.visible = false;
+        neutrino.mesh.visible = true; neutrino.moveTo(at());
+      }, update: (s) => {
+        if (!capture) lepton.moveTo(at().addScaledVector(d1, 6 * s));
+        neutrino.moveTo(at().addScaledVector(d2, 9 * s));
+      } },
+      { duration: 2.6, caption: ev.captions[capture ? 3 : 2], enter: () => this.#tint(i, null), update: (s) => {
+        if (!capture) lepton.moveTo(at().addScaledVector(d1, 6 + 26 * s));
+        neutrino.moveTo(at().addScaledVector(d2, 9 + 40 * s));
+        this.#zoom(1.003);
+      } },
+    ];
+  }
+
+  // Neutron-induced fission: absorb, stretch, neck, snap, fly apart (+ prompt neutrons).
+  #setupFission() {
+    const ev = this.event;
+    const { pos, isProton } = this;
+    const A = this.iso.A;
+    const R = (this.radii.Rp + this.radii.Rn) / 2;
+    // Split the nucleons along z into a heavy and a light fragment (by count).
+    const ax = this.screenRight.clone();
+    const along = (i) => pos[3 * i] * ax.x + pos[3 * i + 1] * ax.y + pos[3 * i + 2] * ax.z;
+    const order = [...Array(A).keys()].filter((i) => !this.inHalo[i]).sort((a, b) => along(a) - along(b));
+    const nHeavy = Math.round(order.length * ev.split);
+    const heavy = order.slice(0, nHeavy), light = order.slice(nHeavy);
+    const Rh = 1.15 * Math.cbrt(heavy.length), Rl = 1.15 * Math.cbrt(light.length);
+    ev.clusters = [{ center: ax.clone().multiplyScalar(-0.35 * Rl).toArray(), R: Rh }, { center: ax.clone().multiplyScalar(0.35 * Rh).toArray(), R: Rl }];
+    heavy.forEach((i) => { ev.cluster[i] = 0; });
+    light.forEach((i) => { ev.cluster[i] = 1; });
+    // Prompt neutrons: taken from where the neck will be.
+    const neckNeutrons = order.filter((i) => !isProton[i]).sort((a, b) => Math.abs(along(a)) - Math.abs(along(b))).slice(0, ev.neutrons);
+    const incoming = this.#particle('#f2f2f2', 0.55);
+    const dirIn = this.screenUp.clone().multiplyScalar(-1).addScaledVector(this.screenRight, -0.3).normalize();
+    const labels = [this.#label(ev.labels[0]), this.#label(ev.labels[1])];
+    labels.forEach((l) => { l.visible = false; });
+    let sep = 0; // extra separation of the two centers, fm
+    const setSep = (d) => {
+      const dz = d - sep;
+      sep = d;
+      // Each fragment's center moves; carry its nucleons along so they keep up.
+      const shiftH = (-dz * light.length) / order.length, shiftL = (dz * heavy.length) / order.length;
+      for (let k = 0; k < 3; k++) {
+        ev.clusters[0].center[k] += shiftH * ax.getComponent(k);
+        ev.clusters[1].center[k] += shiftL * ax.getComponent(k);
+      }
+      return [shiftH, shiftL];
+    };
+    const carry = ([sh, sl], fraction) => {
+      for (const [members, shift] of [[heavy, sh], [light, sl]]) {
+        members.forEach((i) => {
+          if (ev.scripted[i]) return;
+          for (let k = 0; k < 3; k++) pos[3 * i + k] += shift * fraction * ax.getComponent(k);
+        });
+      }
+    };
+    const perp = this.screenUp.clone();
+    const free = neckNeutrons.map((i, k) => ({ i, dir: perp.clone().multiplyScalar(k % 2 ? 1 : -1).applyAxisAngle(ax, k * 0.9).addScaledVector(ax, 0.2 * (k - 1)).normalize() }));
+    ev.stages = [
+      { duration: 1.6, caption: ev.captions[0], enter: () => incoming.moveTo(dirIn.clone().multiplyScalar(R + 22)),
+        update: (s) => incoming.moveTo(dirIn.clone().multiplyScalar((R + 22) * (1 - s) + 0.5)) },
+      { duration: 1.6, caption: ev.captions[1], enter: () => { incoming.mesh.visible = false; incoming.trail.visible = false; },
+        update: (s) => { const target = 0.6 * R * s; carry(setSep(target), 0.25); } },
+      { duration: 2.2, caption: ev.captions[2], update: (s) => { const target = 0.6 * R + (Rh + Rl - 0.6 * R + 0.5) * s * s; carry(setSep(target), 0.35); } },
+      { duration: 0.8, caption: ev.captions[3], enter: () => {
+        free.forEach(({ i }) => { ev.scripted[i] = 1; ev.cluster[i] = -1; this.#tint(i, '#f2f2f2'); });
+      }, update: (s) => {
+        carry(setSep(Rh + Rl + 0.5 + 2 * s), 1);
+        free.forEach(({ i, dir }) => { const v = dir.clone().multiplyScalar(0.25); pos[3 * i] += v.x; pos[3 * i + 1] += v.y; pos[3 * i + 2] += v.z; });
+      } },
+      { duration: 3.2, caption: ev.captions[4], enter: () => labels.forEach((l) => { l.visible = true; }), update: (s, dt) => {
+        carry(setSep(Rh + Rl + 2.5 + 55 * s * s), 1);
+        free.forEach(({ i, dir }) => { const v = dir.clone().multiplyScalar(0.5); pos[3 * i] += v.x; pos[3 * i + 1] += v.y; pos[3 * i + 2] += v.z; });
+        labels[0].position.fromArray(ev.clusters[0].center).addScaledVector(this.screenUp, Rh + 2.5);
+        labels[1].position.fromArray(ev.clusters[1].center).addScaledVector(this.screenUp, Rl + 2.5);
+        this.#zoom(1 + 0.25 * dt);
+      } },
+    ];
+  }
+
+  // D + T fusion: approach, tunnel, merge into ⁵He*, split into ⁴He + n.
+  #setupFusion() {
+    const ev = this.event;
+    const { pos, isProton } = this;
+    const p = [], n = [];
+    for (let i = 0; i < 5; i++) (isProton[i] ? p : n).push(i);
+    const D = [p[0], n[0]], T = [p[1], n[1], n[2]];
+    ev.clusters = [{ center: [-16, 0, 0], R: 1.4 }, { center: [16, 0, 0], R: 1.6 }];
+    D.forEach((i) => { ev.cluster[i] = 0; });
+    T.forEach((i) => { ev.cluster[i] = 1; });
+    const place = (members, c) => members.forEach((i, k) => pos.set([c[0] + Math.cos(k * 2.1) * 0.7, c[1] + Math.sin(k * 2.1) * 0.7, c[2] + (k - 1) * 0.4], 3 * i));
+    place(D, ev.clusters[0].center); place(T, ev.clusters[1].center);
+    const labels = [this.#label('²H'), this.#label('³H')];
+    const moveCluster = (k, members, x) => {
+      const dx = x - ev.clusters[k].center[0];
+      ev.clusters[k].center[0] = x;
+      members.forEach((i) => { if (!ev.scripted[i]) pos[3 * i] += dx; });
+    };
+    const neutron = T[2];
+    const he4 = [p[0], p[1], n[0], n[1]];
+    ev.stages = [
+      { duration: 2.6, caption: ev.captions[0], update: (s) => {
+        const e = 1 - (1 - s) ** 2; // decelerating as the Coulomb barrier pushes back
+        moveCluster(0, D, -16 + 14 * e); moveCluster(1, T, 16 - 14 * e);
+        labels[0].position.set(ev.clusters[0].center[0], 0, 3); labels[1].position.set(ev.clusters[1].center[0], 0, 3);
+      } },
+      { duration: 1.4, caption: ev.captions[1], enter: () => { labels.forEach((l) => { l.visible = false; }); [...D, ...T].forEach((i) => this.#tint(i, '#ffd75e')); },
+        update: (s) => { moveCluster(0, D, -2 + 2 * s); moveCluster(1, T, 2 - 2 * s); ev.clusters[0].R = ev.clusters[1].R = 1.6 + 0.4 * s; } },
+      { duration: 3.0, caption: ev.captions[2], enter: () => {
+        [...D, ...T].forEach((i) => this.#tint(i, null));
+        ev.scripted[neutron] = 1; ev.cluster[neutron] = -1;
+        he4.forEach((i) => { ev.cluster[i] = 0; });
+        ev.clusters[0].center[0] = 0; ev.clusters[0].R = 1.7;
+        const lab = this.#label('⁴He');
+        const nl = this.#label('n  14.1 MeV');
+        ev.splitLabels = [lab, nl];
+      }, update: (s) => {
+        moveCluster(0, he4, -12 * s);
+        pos[3 * neutron] = 2 + 26 * s; pos[3 * neutron + 1] = 0.5; pos[3 * neutron + 2] = 0;
+        this.#zoom(1.0025);
+        ev.splitLabels[0].position.set(ev.clusters[0].center[0], 0, 3);
+        ev.splitLabels[1].position.set(pos[3 * neutron], 0, 2.5);
+      } },
+    ];
   }
 
   // ---------- rotation as a flow ----------
@@ -442,12 +747,17 @@ export class NucleusViewer {
 
     // Mean field (radial Woods–Saxon force, in the rotating body frame).
     const wells = [];
+    const scripted = this.event?.scripted;
     for (let i = 0; i < n; i++) {
       const w = this.#well(i, this.t, d);
       wells.push(w);
+      if (scripted?.[i]) continue;
       // Body frame: rotate by −angle about x, then remove the dipole shift along body z.
-      const x = pos[3 * i], y0 = pos[3 * i + 1], z0 = pos[3 * i + 2];
-      const y = ca * y0 + sa * z0, z = -sa * y0 + ca * z0 - w.shift;
+      // (Fragment wells during events are simple spheres around their own centers.)
+      const cw = w.center ?? [0, 0, 0];
+      const cr = w.center ? 1 : ca, sr = w.center ? 0 : sa;
+      const x = pos[3 * i] - cw[0], y0 = pos[3 * i + 1] - cw[1], z0 = pos[3 * i + 2] - cw[2];
+      const y = cr * y0 + sr * z0, z = -sr * y0 + cr * z0 - w.shift;
       const r = Math.hypot(x, y, z) || 1e-6;
       const s = r - w.R * this.#shape(z / r, w.beta);
       const e = Math.exp(Math.min(40, s / w.a));
@@ -463,10 +773,10 @@ export class NucleusViewer {
       }
       const fx = (push * x) / r, fyb = (push * y) / r, fzb = (push * z) / r;
       force[3 * i] += fx;
-      force[3 * i + 1] += ca * fyb - sa * fzb;
-      force[3 * i + 2] += sa * fyb + ca * fzb;
+      force[3 * i + 1] += cr * fyb - sr * fzb;
+      force[3 * i + 2] += sr * fyb + cr * fzb;
       // Outward unit vector (lab frame) and how far past the surface, for the wall below.
-      w.out = [x / r, (ca * y - sa * z) / r, (sa * y + ca * z) / r];
+      w.out = [x / r, (cr * y - sr * z) / r, (sr * y + cr * z) / r];
       if (!w.halo) w.past = s;
     }
 
@@ -474,6 +784,7 @@ export class NucleusViewer {
     const cut2 = NN_CUT * NN_CUT;
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
+        if (scripted && (scripted[i] || scripted[j])) continue;
         const dx = pos[3 * i] - pos[3 * j], dy = pos[3 * i + 1] - pos[3 * j + 1], dz = pos[3 * i + 2] - pos[3 * j + 2];
         const r2 = dx * dx + dy * dy + dz * dz;
         if (r2 >= cut2) continue;
@@ -486,6 +797,7 @@ export class NucleusViewer {
 
     // Langevin update: v += (F/m − γv)dt + √(2γ kT/m · dt)·ξ.
     for (let i = 0; i < n; i++) {
+      if (scripted?.[i]) continue;
       const g = wells[i].gamma ?? GAMMA;
       const kick = noise * Math.sqrt(2 * g * wells[i].kT * ACC * dt);
       for (let k = 0; k < 3; k++) {
@@ -720,6 +1032,7 @@ export class NucleusViewer {
     // Rotation is a flow that carries the nucleons along at the full clock rate.
     if (this.mode === 'rotation' && this.periods.rotation) this.#advect(t0, this.t);
 
+    if (this.event) this.#tickEvent(dt);
     const A = this.iso.A;
     const out = this.drawPos;
     out.set(this.pos);
@@ -807,12 +1120,12 @@ export class NucleusViewer {
   #emit(out) {
     const n = out.length / 3;
     const i = Math.floor(Math.random() * n);
-    if (this.busy[i]) return;
+    if (this.busy[i] || this.event?.scripted[i]) return;
     const r2max = PION_RANGE * PION_RANGE;
     let j = -1;
     for (let tries = 0; tries < 40; tries++) {
       const k = Math.floor(Math.random() * n);
-      if (k === i || this.busy[k]) continue;
+      if (k === i || this.busy[k] || this.event?.scripted[k]) continue;
       const dx = out[3 * i] - out[3 * k], dy = out[3 * i + 1] - out[3 * k + 1], dz = out[3 * i + 2] - out[3 * k + 2];
       if (dx * dx + dy * dy + dz * dz < r2max) { j = k; break; }
     }

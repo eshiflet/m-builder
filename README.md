@@ -193,6 +193,29 @@ Very light nuclei (A < 40) are less reliable, so a couple use measured values.
 
 Amplitudes are exaggerated so they can be seen.
 
+**Decay & reactions** plays what the selected isotope does, with captions and
+a chart. Q values and half-lives are measured for about 60 well-known nuclides;
+others are predicted from the mass formula and labeled as such.
+
+- **α decay:** a 2p+2n cluster forms, rattles against the Coulomb barrier, and
+  tunnels out. Gamow's model gives the half-life: G = √(2μc²)/(ħc)·2Z_d e²/√Q·
+  [arccos√x − √(x(1−x))], t½ = ln2/(preformation·ν·e^(−2G)), with ~3%
+  preformation. It reproduces measured half-lives from ²¹²Po (0.3 µs) to ²³⁸U
+  (4.5 billion years) within a factor of a few, across 23 orders of magnitude.
+  The chart shows the barrier and the tunneling region.
+- **β⁻, β⁺ and electron capture:** a nucleon changes identity (d → u + W⁻ →
+  e⁻ ν̄, and so on), emitting a lepton and a (anti)neutrino. The chart shows the
+  isobar mass parabola that β decay slides down.
+- **Neutron-induced fission** (Z ≥ 90): absorption, stretching, necking,
+  scission, fragments and prompt neutrons, using two-center fragment wells. The
+  liquid-drop barrier comes from the Cohen–Swiatecki fit to the fissility
+  (≈6 MeV for ²³⁶U), and Q ≈ 170–200 MeV from binding energies. The chart shows
+  the binding-energy-per-nucleon curve.
+- **D + T fusion** (for hydrogen): tunneling through the Coulomb barrier, ⁵He*,
+  then ⁴He + n with Q = 17.6 MeV from measured binding energies.
+
+After a decay, **Show** jumps to the daughter nucleus.
+
 **Quarks** shows three quarks inside every nucleon, with gluon lines and color
 charges that keep swapping. **Inside a proton / neutron** zooms into one
 nucleon: valence quarks (uud or udd) with their charges, wiggling gluon flux

@@ -3,6 +3,7 @@ import { COVALENT_RADIUS } from './molecule-data.js';
 import {
   isotopeFor, bindingEnergy, deformation, collectiveModes, radiusFm, isMagic, sci, densityRadii,
   allowedNeutrons, rotationPeriod, valenceCounts, BABYSECOND, NUCLEONS, QUARKS,
+  decayInfo, alphaTunneling, fissionBarrier, fissionSplit, halfLifeText, bindingOf, AMU_MEV,
 } from './nucleus-data.js';
 import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, PION_COLORS, COLOR_CHARGES } from './nucleus-viewer.js';
 
@@ -59,19 +60,98 @@ function shapeChart(shape) {
   </svg>`;
 }
 
-export function createNucleusUI() {
+const symbolOf = (Z) => ELEMENTS[Z - 1]?.symbol ?? '?';
+const nuclideHTML = (Z, A) => `<sup>${A}</sup>${symbolOf(Z)}`;
+const nuclideText = (Z, A) => `${String(A).replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d])}${symbolOf(Z)}`;
+const MODE_NAMES = { 'α': 'α decay', 'β⁻': 'β⁻ decay', 'β⁺': 'β⁺ decay', EC: 'electron capture', '2β⁻': 'double β⁻ decay', SF: 'spontaneous fission' };
+const daughterOf = (Z, A, type) => ({ 'α': [Z - 2, A - 4], 'β⁻': [Z + 1, A], 'β⁺': [Z - 1, A], EC: [Z - 1, A], '2β⁻': [Z + 2, A] })[type];
+
+/** Potential energy of an α vs distance: nuclear well inside R, Coulomb 2Z_d·e²/r outside. */
+function barrierChart(g, Q) {
+  const W = 520, H = 190, x0 = 40, x1 = W - 12, yb = H - 30, yt = 12;
+  const rMax = Math.min(g.b * 1.15, 140);
+  const vMax = g.barrier * 1.1, vMin = -12;
+  const X = (r) => x0 + (r / rMax) * (x1 - x0);
+  const Y = (v) => yt + ((vMax - v) / (vMax - vMin)) * (yb - yt);
+  let d = `M${X(0)},${Y(-10)}L${X(g.R)},${Y(-10)}L${X(g.R)},${Y(g.barrier)}`;
+  for (let r = g.R; r <= rMax; r += rMax / 200) d += `L${X(r).toFixed(1)},${Y((2 * (g.barrier * g.R)) / (2 * r)).toFixed(1)}`;
+  let tunnel = `M${X(g.R)},${Y(Q)}`;
+  for (let r = g.R; r <= Math.min(g.b, rMax); r += (g.b - g.R) / 80) tunnel += `L${X(r).toFixed(1)},${Y((g.barrier * g.R) / r).toFixed(1)}`;
+  tunnel += `L${X(Math.min(g.b, rMax))},${Y(Q)}Z`;
+  return `<svg class="decay-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Coulomb barrier for alpha decay">
+    <path d="${tunnel}" class="tunnel"/><path d="${d}" class="curve"/>
+    <line x1="${X(0)}" x2="${x1}" y1="${Y(Q)}" y2="${Y(Q)}" class="qline"/>
+    <line x1="${x0}" x2="${x1}" y1="${Y(0)}" y2="${Y(0)}" class="axis"/>
+    <text x="${X(g.R) + 6}" y="${Y(g.barrier) + 4}" class="hl">barrier ≈ ${g.barrier.toFixed(0)} MeV</text>
+    <text x="${x1}" y="${Y(Q) - 6}" text-anchor="end" class="hl">α energy Q = ${Q.toFixed(2)} MeV</text>
+    <text x="${(X(g.R) + X(Math.min(g.b, rMax))) / 2}" y="${Y(Q) + 16}" text-anchor="middle" class="lbl">tunnels through ${(g.b - g.R).toFixed(0)} fm of “forbidden” region</text>
+    <text x="${X(g.R / 2)}" y="${Y(-10) - 6}" text-anchor="middle" class="lbl">inside</text>
+    <text x="${x0}" y="${H - 8}" class="lbl">0</text><text x="${x1}" y="${H - 8}" text-anchor="end" class="lbl">${rMax.toFixed(0)} fm from the center</text>
+    <text x="4" y="${yt + 4}" class="lbl">MeV</text>
+  </svg>`;
+}
+
+/** Energy of the isobars (same A) vs Z: β decay runs downhill toward the valley of stability. */
+function parabolaChart(Z, A, toZ) {
+  const zs = [];
+  for (let z = Z - 4; z <= Z + 4; z++) if (z >= 1 && z < A) zs.push(z);
+  // Atomic mass energy relative to Z: E(z) = −B(z, A) − z·(m_n − m_H)c².
+  const E = (z) => -bindingOf(z, A) - z * 0.782;
+  const es = zs.map(E), lo = Math.min(...es), hi = Math.max(...es);
+  const W = 520, H = 190, x0 = 30, x1 = W - 20, yb = H - 34, yt = 14;
+  const X = (z) => x0 + ((z - zs[0]) / Math.max(1, zs.at(-1) - zs[0])) * (x1 - x0);
+  const Y = (e) => yt + ((e - lo) / Math.max(1e-6, hi - lo)) * (yb - yt);
+  const pts = zs.map((z, k) => `<circle cx="${X(z)}" cy="${Y(es[k])}" r="${z === Z || z === toZ ? 6 : 4}" class="dot${z === Z || z === toZ ? ' hi' : ''}"/><text x="${X(z)}" y="${H - 14}" text-anchor="middle" class="lbl">${nuclideText(z, A)}</text>`).join('');
+  return `<svg class="decay-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Mass parabola">
+    <defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0L8,4L0,8Z" fill="#ffd75e"/></marker></defs>
+    <path d="${zs.map((z, k) => `${k ? 'L' : 'M'}${X(z)},${Y(es[k])}`).join('')}" class="curve" opacity="0.5"/>${pts}
+    <line x1="${X(Z)}" y1="${Y(E(Z))}" x2="${X(toZ)}" y2="${Y(E(toZ)) - 6}" class="arrow"/>
+    <text x="4" y="${yt + 2}" class="lbl">mass (energy) ↓ lower is more stable</text>
+  </svg>`;
+}
+
+/** Binding energy per nucleon vs A, with arrows for a fission split or a fusion. */
+function bindingChart(marks) {
+  const W = 520, H = 200, x0 = 36, x1 = W - 12, yb = H - 30, yt = 12;
+  const X = (a) => x0 + (a / 250) * (x1 - x0);
+  const Y = (b) => yt + ((9 - b) / 9) * (yb - yt);
+  let d = '';
+  for (let a = 12; a <= 250; a += 2) {
+    const z = Math.round(a / (1.98 + 0.0155 * a ** (2 / 3)));
+    d += `${d ? 'L' : 'M'}${X(a).toFixed(1)},${Y(bindingOf(z, a) / a).toFixed(1)}`;
+  }
+  const light = [[1, 2], [1, 3], [2, 3], [2, 4], [3, 6], [3, 7], [4, 9], [6, 12], [8, 16]];
+  const dots = light.map(([z, a]) => `<circle cx="${X(a)}" cy="${Y(bindingOf(z, a) / a)}" r="3" class="dot"/>`).join('');
+  const markSvg = marks.map(({ Z, A, label }) => `<circle cx="${X(A)}" cy="${Y(bindingOf(Z, A) / A)}" r="5" class="dot hi"/><text x="${X(A) + 6}" y="${Y(bindingOf(Z, A) / A) + (A < 20 ? 14 : -8)}" class="hl">${label}</text>`).join('');
+  const arrows = marks.filter((m) => m.from).map(({ Z, A, from }) => `<line x1="${X(from.A)}" y1="${Y(bindingOf(from.Z, from.A) / from.A)}" x2="${X(A)}" y2="${Y(bindingOf(Z, A) / A) + 6}" class="arrow"/>`).join('');
+  return `<svg class="decay-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Binding energy per nucleon">
+    <defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0L8,4L0,8Z" fill="#ffd75e"/></marker></defs>
+    <path d="${d}" class="curve"/>${dots}${arrows}${markSvg}
+    <line x1="${x0}" x2="${x1}" y1="${yb}" y2="${yb}" class="axis"/>
+    ${[0, 50, 100, 150, 200, 250].map((a) => `<text x="${X(a)}" y="${H - 12}" text-anchor="middle" class="lbl">${a}</text>`).join('')}
+    <text x="${x1}" y="${H - 1}" text-anchor="end" class="lbl">mass number A</text>
+    ${[2, 4, 6, 8].map((b) => `<text x="${x0 - 6}" y="${Y(b) + 4}" text-anchor="end" class="lbl">${b}</text>`).join('')}
+    <text x="4" y="${yt}" class="lbl">MeV per nucleon</text>
+    <text x="${X(56)}" y="${Y(8.8) - 8}" text-anchor="middle" class="lbl">iron peak</text>
+  </svg>`;
+}
+
+export function createNucleusUI({ onElementChange } = {}) {
   const viewer = new NucleusViewer($('#nuc-canvas'));
   let z = 6, neutrons = null;
   let iso = null, modes = null, shape = null, radii = null;
   let mode = 'none', preferred = 'auto', view = 'nucleus';
   let spin = 10;
   let stats = null;
+  let eventInfo = null; // the decay or reaction playing, if any
 
   viewer.onScaleChange = (fm) => { $('#nuc-scale').textContent = `view width ≈ ${fm < 10 ? fm.toFixed(1) : fm.toFixed(0)} fm`; };
   viewer.onClock = (t, lagging) => {
     $('#nuc-clock').textContent = `t = ${t < 1000 ? t.toFixed(1) : about(t)} babyseconds (${sci(t * BABYSECOND)} s)${lagging ? ' · nucleon motion slowed to keep up' : ''}`;
   };
   viewer.onStats = (s) => { stats = s; renderStats(); };
+  viewer.onEventCaption = (text) => { $('#nuc-caption').innerHTML = text; };
+  viewer.onEventEnd = () => { if (eventInfo) { eventInfo.done = true; render(); } };
 
   /** Show element z, optionally a specific isotope by mass number. */
   function setElement(zNew, A = null) {
@@ -81,6 +161,9 @@ export function createNucleusUI() {
   }
 
   function load() {
+    if (viewer.eventPlaying) viewer.stopEvent(false);
+    eventInfo = null;
+    $('#nuc-caption').innerHTML = '';
     iso = isotopeFor(z, neutrons);
     shape = deformation(iso.Z, iso.N);
     modes = collectiveModes(iso.Z, iso.A, shape.beta);
@@ -180,7 +263,9 @@ export function createNucleusUI() {
         viewer.showQuarks ? COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]} quark</span>`).join('') : ''}`
       : `${COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]}</span>`).join('')}<span><i style="background:#ffe9a8"></i>gluon</span><span><i style="background:#9ef0ff"></i>sea quark pair</span>`;
 
+    renderDecayButtons();
     if (view !== 'nucleus') return renderNucleon();
+    if (eventInfo) return renderEvent();
 
     const el = ELEMENTS[iso.Z - 1];
     const R = radiusFm(iso.A);
@@ -226,6 +311,7 @@ export function createNucleusUI() {
           <div class="muted">${iso.Z} proton${iso.Z > 1 ? 's' : ''} · ${iso.N} neutron${iso.N === 1 ? '' : 's'} · ${iso.stability}</div>
         </div>
       </div>
+      ${radioactivityText()}
       ${modeLine}
       ${flowText}
       ${haloText}
@@ -255,7 +341,134 @@ export function createNucleusUI() {
     renderStats();
   }
 
-    function renderNucleon() {
+    // ---------- decays and reactions ----------
+
+  /** The decays and reactions this nucleus can show. */
+  function availableEvents() {
+    const d = decayInfo(iso);
+    const list = d.modes.filter((m) => ['α', 'β⁻', 'β⁺', 'EC'].includes(m.type)).map((m) => ({ type: m.type, Q: m.Q, label: MODE_NAMES[m.type] }));
+    if (iso.Z >= 90) list.push({ type: 'fission', label: 'Fission (neutron-induced)' });
+    if (iso.Z === 1) list.push({ type: 'fusion', label: 'D + T fusion' });
+    return { d, list };
+  }
+
+  function renderDecayButtons() {
+    const { list } = availableEvents();
+    $('#nuc-decay-wrap').hidden = view !== 'nucleus';
+    $('#nuc-decay').innerHTML = (eventInfo
+      ? `<button class="chip" data-event-stop>■ Back to ${isoLabel(iso)}</button>${eventInfo.done ? '<button class="chip" data-event-replay>↻ Replay</button>' : ''}${
+        eventInfo.done && eventInfo.daughter ? `<button class="chip" data-event-daughter>Show ${nuclideHTML(...eventInfo.daughter)}</button>` : ''}`
+      : list.length ? list.map((e) => `<button class="chip" data-event="${e.type}">▶ ${e.label}</button>`).join('')
+        : '<span class="muted">Stable: no decay. Use the Isotope stepper to find unstable isotopes.</span>');
+  }
+
+  function radioactivityText() {
+    const { d } = availableEvents();
+    if (!d.modes.length) return '';
+    const modesText = d.modes.map((m) => `${MODE_NAMES[m.type] ?? m.type}${m.Q ? ` (Q = ${m.Q < 0.1 ? `${(m.Q * 1000).toFixed(1)} keV` : `${m.Q.toFixed(m.Q < 1 ? 3 : 2)} MeV`})` : ''}`).join(', then ');
+    let gamow = '';
+    const a = d.modes.find((m) => m.type === 'α');
+    if (a && a.Q > 0) {
+      const g = alphaTunneling(iso.Z, iso.A, a.Q);
+      gamow = ` Gamow’s tunneling model predicts a half-life of ${halfLifeText(g.halfLife)}${d.halfLife ? ` (measured: ${halfLifeText(d.halfLife)})` : ''}.`;
+    }
+    return `<p class="explain"><b>Radioactivity:</b> ${d.predicted ? 'predicted from the mass formula: ' : ''}${modesText}${d.halfLife ? `; half-life ${halfLifeText(d.halfLife)}` : ''}.${gamow} Press ▶ above to watch it happen.</p>`;
+  }
+
+  function startEvent(type) {
+    const { d } = availableEvents();
+    const sym = (Z, A) => nuclideText(Z, A);
+    const parent = sym(iso.Z, iso.A);
+    const mode = d.modes.find((m) => m.type === type);
+    const Q = mode?.Q ?? 0;
+    const info = { type };
+    const fmtQ = Q < 0.1 ? `${(Q * 1000).toFixed(1)} keV` : `${Q.toFixed(2)} MeV`;
+    if (type === 'α') {
+      const g = alphaTunneling(iso.Z, iso.A, Q);
+      const v = Math.sqrt((2 * Q) / (4 * AMU_MEV)) * 100;
+      const [dz, da] = daughterOf(iso.Z, iso.A, type);
+      info.captions = [
+        'Two protons and two neutrons near the surface come together as an α particle (a ⁴He nucleus).',
+        `It rattles around inside, hitting the Coulomb barrier about ${sci(g.nu)} times a second. The barrier is ${g.barrier.toFixed(0)} MeV high, but the α has only ${fmtQ}.`,
+        `Each hit there’s a 1-in-${sci(1 / g.P)} chance it tunnels straight through: quantum mechanics lets it pass a wall it can’t climb.`,
+        `Outside, Coulomb repulsion flings it away with ${fmtQ} (about ${v.toFixed(1)}% of light speed). ${parent} has become ${sym(dz, da)}.`,
+      ];
+      info.daughter = [dz, da];
+      info.gamow = g;
+    } else if (type === 'β⁻' || type === 'β⁺' || type === 'EC') {
+      const [dz, da] = daughterOf(iso.Z, iso.A, type);
+      info.captions = type === 'β⁻' ? [
+        'A neutron (quarks u d d)…',
+        'One down quark turns into an up quark by emitting a W⁻ boson (d → u + W⁻), which instantly becomes an electron and an antineutrino. The neutron is now a proton (u u d).',
+        `The electron (the “β particle”) and the antineutrino share ${fmtQ} and fly off. ${parent} → ${sym(dz, da)}.`,
+      ] : type === 'β⁺' ? [
+        'A proton (quarks u u d)…',
+        'One up quark turns into a down quark (u → d + W⁺ → d + e⁺ + ν). The proton is now a neutron (u d d).',
+        `The positron and the neutrino share the energy and fly off; the positron soon meets an electron and both vanish into two 511 keV gamma rays (this is how PET scans work). ${parent} → ${sym(dz, da)}.`,
+      ] : [
+        'An inner (1s) electron of the atom, whose orbital overlaps the nucleus, wanders in…',
+        '…and a proton captures it.',
+        'p + e⁻ → n + ν: the proton becomes a neutron.',
+        `Only the neutrino leaves, carrying ${fmtQ}; the atom then gives off X-rays as its electrons refill the hole. ${parent} → ${sym(dz, da)}.`,
+      ];
+      info.daughter = [dz, da];
+    } else if (type === 'fission') {
+      const Ac = iso.A + 1;
+      const split = fissionSplit(iso.Z, Ac);
+      const fb = fissionBarrier(iso.Z, Ac);
+      info.split = split.heavy.A / (split.heavy.A + split.light.A);
+      info.neutrons = split.neutrons;
+      info.labels = [nuclideText(split.heavy.Z, split.heavy.A), nuclideText(split.light.Z, split.light.A)];
+      info.captions = [
+        `A neutron is absorbed: ${parent} + n → ${sym(iso.Z, Ac)}*. The ~6 MeV of binding energy it brings sets the nucleus quivering.${iso.A % 2 === 0 ? ' (For even-A nuclei like this one a fast neutron is needed; ²³⁵U and ²³⁹Pu split with slow ones.)' : ''}`,
+        'The excited drop stretches. Surface tension pulls it back; the protons’ Coulomb repulsion pushes the ends apart.',
+        `It gets past the fission barrier (about ${fb.Bf.toFixed(1)} MeV in the liquid-drop model) and Coulomb wins: a neck forms…`,
+        `Scission! The neck snaps and ${split.neutrons} neutrons are released. Each can split another nucleus: a chain reaction.`,
+        `The fragments ${info.labels.join(' and ')} fly apart at about 3–4% of light speed. Total energy released ≈ ${split.Q.toFixed(0)} MeV, around 50 million times more than burning one carbon atom.`,
+      ];
+      info.splitData = split;
+      info.barrier = fb;
+    } else if (type === 'fusion') {
+      const Qf = bindingOf(2, 4) - bindingOf(1, 2) - bindingOf(1, 3);
+      info.scene = { iso: { Z: 2, N: 3, A: 5, symbol: 'He', name: 'Helium', halo: null }, radii: densityRadii(2, 3) };
+      info.captions = [
+        'Deuterium (p + n) and tritium (p + 2n) approach. Their Coulomb barrier is about 0.4 MeV, but even at 150 million °C in a fusion reactor they carry only ~0.02 MeV…',
+        '…so they tunnel through the barrier, and the strong force grabs them: a ⁵He nucleus forms for an instant.',
+        `It splits into ⁴He (3.5 MeV) and a neutron (14.1 MeV): Q = ${Qf.toFixed(1)} MeV, about 4× more energy per kilogram than fission. This is what powers hydrogen-bomb and fusion-reactor designs; the Sun fuses hydrogen by a slower chain.`,
+      ];
+      info.Q = Qf;
+    }
+    info.Q ??= Q;
+    eventInfo = info;
+    viewer.startEvent(info);
+    render();
+  }
+
+  function renderEvent() {
+    const e = eventInfo;
+    if (e.type === 'fusion') $('#nuc-title').innerHTML = '<span><strong>D + T fusion</strong><br><span class="muted">²H + ³H → ⁴He + n</span></span>';
+    let body = '';
+    if (e.type === 'α') {
+      const g = e.gamow;
+      body = `${barrierChart(g, e.Q)}
+        <p class="explain"><b>Why α decay is so slow, and so varied.</b> Inside the nucleus the α has ${e.Q.toFixed(2)} MeV, but the Coulomb wall it must cross is ${g.barrier.toFixed(0)} MeV high and ${(g.b - g.R).toFixed(0)} fm thick. Classically it could never leave. Quantum mechanically, its wavefunction leaks through with probability e<sup>−2G</sup> = ${sci(g.P)} per hit (Gamow factor G = ${g.G.toFixed(1)}). Hitting ${sci(g.nu)} times a second, and existing as a cluster only ~3% of the time, gives a half-life of ${halfLifeText(g.halfLife)}${availableEvents().d.halfLife ? ` (measured: ${halfLifeText(availableEvents().d.halfLife)})` : ''}. Because G depends on 1/√Q, a few MeV more makes decay billions of times faster: ²¹²Po (8.95 MeV) lives 0.3 µs, ²³⁸U (4.27 MeV) 4.5 billion years.</p>`;
+    } else if (e.type === 'β⁻' || e.type === 'β⁺' || e.type === 'EC') {
+      body = `${parabolaChart(iso.Z, iso.A, e.daughter[0])}
+        <p class="explain"><b>Sliding down the valley of stability.</b> Nuclei with the same number of nucleons (isobars) have different masses; by E = mc², lighter is more stable. β decay changes a neutron into a proton (or back) to move downhill toward the bottom of this parabola. It’s driven by the <i>weak</i> force, which is why it’s slow: free neutrons take about 10 minutes, ${availableEvents().d.halfLife ? `and this nucleus ${halfLifeText(availableEvents().d.halfLife)}` : 'and nuclei anywhere from milliseconds to billions of years'}. The energy is shared randomly between the ${e.type === 'β⁻' ? 'electron and antineutrino' : e.type === 'β⁺' ? 'positron and neutrino' : 'neutrino and the atom'}, so β particles come out with a spread of energies; that missing energy is how Pauli predicted the neutrino in 1930.</p>`;
+    } else if (e.type === 'fission') {
+      const sp = e.splitData;
+      body = `${bindingChart([{ Z: iso.Z, A: iso.A + 1, label: nuclideText(iso.Z, iso.A + 1) }, { ...sp.heavy, label: nuclideText(sp.heavy.Z, sp.heavy.A), from: { Z: iso.Z, A: iso.A + 1 } }, { ...sp.light, label: nuclideText(sp.light.Z, sp.light.A), from: { Z: iso.Z, A: iso.A + 1 } }])}
+        <p class="explain"><b>Where the energy comes from.</b> Nucleons in mid-sized nuclei are bound more tightly (≈8.5 MeV each) than in very heavy ones (≈7.6 MeV). Splitting a ${iso.A + 1}-nucleon nucleus into two mid-sized ones gains about 0.8 MeV per nucleon, ≈ ${sp.Q.toFixed(0)} MeV in all. Most of it appears as the fragments’ speed, then heat. The barrier (≈${e.barrier.Bf.toFixed(1)} MeV here; fissility x = ${e.barrier.x.toFixed(2)}) is the hump between “surface tension wins” and “Coulomb wins”. The fragments are neutron-rich, so they go on to β-decay many times: that’s nuclear waste.</p>`;
+    } else if (e.type === 'fusion') {
+      body = `${bindingChart([{ Z: 1, A: 2, label: '²H' }, { Z: 1, A: 3, label: '³H' }, { Z: 2, A: 4, label: '⁴He', from: { Z: 1, A: 3 } }])}
+        <p class="explain"><b>Fusion climbs the steep side of the curve.</b> ⁴He is exceptionally tightly bound (7.07 MeV per nucleon, versus 1.1 for deuterium and 2.8 for tritium), so joining light nuclei releases ${e.Q.toFixed(1)} MeV. The catch is the Coulomb barrier: both nuclei are positive, so they must be extremely hot (≈150 million °C) and still rely on tunneling. That’s why fusion power is so hard to achieve, and why the Sun, at 15 million °C, burns its hydrogen slowly over billions of years.</p>`;
+    }
+    $('#nuc-info').innerHTML = `<div class="info-head"><div><h2>${e.type === 'fusion' ? 'D + T fusion' : `${MODE_NAMES[e.type] ?? 'Fission'} of ${isoLabel(iso)}`}</h2>
+      <div class="muted">${e.done ? 'Finished. Replay it, look at the result, or go back.' : 'Playing… (captions in the view above)'}</div></div></div>${body}
+      <p class="note">The animation is schematic: real α decay waits ${e.type === 'α' ? 'on average the half-life for each nucleus' : 'its turn'}, scission takes ~10⁻²⁰ s, and the particles here move far slower than real ones.</p>`;
+  }
+
+  function renderNucleon() {
       const kind = view;
       const info = NUCLEONS[kind];
       const quarkMass = info.quarks.reduce((s, q) => s + QUARKS[q].mass, 0);
@@ -349,6 +562,19 @@ export function createNucleusUI() {
     viewer.setFlow(b.dataset.value);
   });
   $('#nuc-fit').addEventListener('click', () => viewer.fit());
+  $('#nuc-decay').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.event) startEvent(b.dataset.event);
+    else if (b.dataset.eventReplay != null) startEvent(eventInfo.type);
+    else if (b.dataset.eventStop != null) { viewer.stopEvent(true); eventInfo = null; $('#nuc-caption').innerHTML = ''; render(); }
+    else if (b.dataset.eventDaughter != null) {
+      const [dz, da] = eventInfo.daughter;
+      viewer.stopEvent(false);
+      setElement(dz, da);
+      onElementChange?.(dz);
+    }
+  });
 
   return {
     setElement,

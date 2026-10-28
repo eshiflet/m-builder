@@ -201,3 +201,159 @@ export function sci(x, digits = 2) {
   const sup = String(exp).replace(/-/g, '⁻').replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]);
   return `${mant}×10${sup}`;
 }
+
+// ---------- radioactive decay and reactions ----------
+
+export const AMU_MEV = 931.494;
+const B_HE4 = 28.296; // measured binding energy of ⁴He, MeV
+const MN_MINUS_MH = 0.782; // (m_n − m_¹H)c², MeV
+
+// Measured decay data (main mode first): Q in MeV, half-life in seconds.
+const YEAR = 3.156e7, DAY = 86400;
+const DECAYS = {
+  // α emitters
+  '92,238': { modes: [['α', 4.270]], t: 4.468e9 * YEAR, fission: true },
+  '92,235': { modes: [['α', 4.679]], t: 7.04e8 * YEAR, fission: true },
+  '90,232': { modes: [['α', 4.083]], t: 1.405e10 * YEAR, fission: true },
+  '94,239': { modes: [['α', 5.245]], t: 24110 * YEAR, fission: true },
+  '94,244': { modes: [['α', 4.666]], t: 8.0e7 * YEAR, fission: true },
+  '88,226': { modes: [['α', 4.871]], t: 1600 * YEAR },
+  '86,222': { modes: [['α', 5.590]], t: 3.8235 * DAY },
+  '84,210': { modes: [['α', 5.407]], t: 138.38 * DAY },
+  '84,209': { modes: [['α', 4.979]], t: 124 * YEAR },
+  '84,212': { modes: [['α', 8.954]], t: 2.99e-7 },
+  '83,209': { modes: [['α', 3.137]], t: 2.01e19 * YEAR },
+  '91,231': { modes: [['α', 5.150]], t: 32760 * YEAR },
+  '93,237': { modes: [['α', 4.958]], t: 2.144e6 * YEAR },
+  '95,241': { modes: [['α', 5.638]], t: 432.2 * YEAR },
+  '95,243': { modes: [['α', 5.439]], t: 7370 * YEAR },
+  '96,247': { modes: [['α', 5.353]], t: 1.56e7 * YEAR },
+  '97,247': { modes: [['α', 5.889]], t: 1380 * YEAR },
+  '98,251': { modes: [['α', 6.176]], t: 898 * YEAR },
+  '98,252': { modes: [['α', 6.217]], t: 2.645 * YEAR, fission: true },
+  '99,252': { modes: [['α', 6.739]], t: 471.7 * DAY },
+  '100,257': { modes: [['α', 6.864]], t: 100.5 * DAY },
+  '101,258': { modes: [['α', 7.271]], t: 51.5 * DAY },
+  '102,259': { modes: [['α', 7.85]], t: 58 * 60 },
+  '62,147': { modes: [['α', 2.311]], t: 1.06e11 * YEAR },
+  '60,144': { modes: [['α', 1.905]], t: 2.29e15 * YEAR },
+  // β⁻ emitters
+  '1,3': { modes: [['β⁻', 0.01859]], t: 12.32 * YEAR },
+  '6,14': { modes: [['β⁻', 0.1565]], t: 5730 * YEAR },
+  '15,32': { modes: [['β⁻', 1.711]], t: 14.27 * DAY },
+  '19,40': { modes: [['β⁻', 1.311], ['EC', 1.505]], t: 1.248e9 * YEAR },
+  '27,60': { modes: [['β⁻', 2.824]], t: 5.271 * YEAR },
+  '38,90': { modes: [['β⁻', 0.546]], t: 28.79 * YEAR },
+  '43,98': { modes: [['β⁻', 1.79]], t: 4.2e6 * YEAR },
+  '43,99': { modes: [['β⁻', 0.294]], t: 2.11e5 * YEAR },
+  '53,131': { modes: [['β⁻', 0.971]], t: 8.02 * DAY },
+  '55,137': { modes: [['β⁻', 1.176]], t: 30.08 * YEAR },
+  '75,187': { modes: [['β⁻', 0.00266]], t: 4.12e10 * YEAR },
+  '49,115': { modes: [['β⁻', 0.497]], t: 4.41e14 * YEAR },
+  '87,223': { modes: [['β⁻', 1.149]], t: 22 * 60 },
+  '89,227': { modes: [['β⁻', 0.0448]], t: 21.77 * YEAR },
+  '2,6': { modes: [['β⁻', 3.505]], t: 0.807 },
+  '2,8': { modes: [['β⁻', 10.66]], t: 0.119 },
+  '3,11': { modes: [['β⁻', 20.55]], t: 0.00875 },
+  '4,11': { modes: [['β⁻', 11.51]], t: 13.8 },
+  '4,14': { modes: [['β⁻', 16.29]], t: 0.00435 },
+  '5,17': { modes: [['β⁻', 22.68]], t: 0.00508 },
+  '6,19': { modes: [['β⁻', 16.97]], t: 0.0462 },
+  '6,22': { modes: [['β⁻', 22.0]], t: 0.0061 },
+  '52,130': { modes: [['2β⁻', 2.527]], t: 7.9e20 * YEAR },
+  // β⁺ / electron capture
+  '9,18': { modes: [['β⁺', 1.656]], t: 109.77 * 60 },
+  '6,11': { modes: [['β⁺', 1.982]], t: 20.36 * 60 },
+  '11,22': { modes: [['β⁺', 2.842]], t: 2.602 * YEAR },
+  '5,8': { modes: [['β⁺', 17.98]], t: 0.77 },
+  '61,145': { modes: [['EC', 0.164]], t: 17.7 * YEAR },
+  '85,210': { modes: [['EC', 3.981]], t: 8.1 * 3600 },
+  // spontaneous fission
+  '103,266': { modes: [['SF', 0]], t: 11 * 3600, fission: true },
+};
+
+/** Binding energy (MeV), measured for the lightest nuclei, mass formula otherwise. */
+const MEASURED_B = { '1,1': 0, '1,2': 2.2246, '1,3': 8.4818, '2,3': 7.7180, '2,4': 28.2957, '3,6': 31.994, '3,7': 39.244, '4,9': 58.165, '6,12': 92.162, '8,16': 127.62, '0,1': 0 };
+export const bindingOf = (Z, A) => MEASURED_B[`${Z},${A}`] ?? bindingEnergy(Z, A).B;
+
+/** Q values (MeV) from binding energies: positive means the decay can happen. */
+export function qValues(Z, A) {
+  const B = (z, a) => (z < 0 || a < 1 || z > a ? NaN : bindingOf(z, a));
+  return {
+    alpha: B(Z - 2, A - 4) + B_HE4 - B(Z, A),
+    betaMinus: B(Z + 1, A) - B(Z, A) + MN_MINUS_MH,
+    ec: B(Z - 1, A) - B(Z, A) - MN_MINUS_MH,
+  };
+}
+
+/**
+ * Decay mode(s) of an isotope: measured where we have data, otherwise predicted from
+ * mass-formula Q values ({ predicted: true }). Stable nuclei return modes: [].
+ */
+export function decayInfo(iso) {
+  const known = DECAYS[`${iso.Z},${iso.A}`];
+  if (known) return { modes: known.modes.map(([type, Q]) => ({ type, Q })), halfLife: known.t, fission: !!known.fission, predicted: false };
+  if (iso.isDefault && iso.stability === 'stable') return { modes: [], halfLife: Infinity, fission: false, predicted: false };
+  const q = qValues(iso.Z, iso.A);
+  const modes = [];
+  if (q.betaMinus > 0.05) modes.push({ type: 'β⁻', Q: q.betaMinus });
+  if (q.ec > 1.022 + 0.05) modes.push({ type: 'β⁺', Q: q.ec - 1.022 });
+  else if (q.ec > 0.05) modes.push({ type: 'EC', Q: q.ec });
+  if (iso.Z >= 84 && q.alpha > 0) modes.unshift({ type: 'α', Q: q.alpha });
+  return { modes, halfLife: null, fission: iso.Z >= 90, predicted: true };
+}
+
+/**
+ * α-decay half-life from Gamow's tunneling model: the α rattles inside the nucleus,
+ * hitting the Coulomb barrier ν = v/2R times a second; each time it tunnels through with
+ * probability e^{−2G}, G = √(2μc²)/(ħc) · 2Z_d·e²/√Q · [arccos√x − √(x(1−x))], x = R/b,
+ * b = 2Z_d·e²/Q (the classical turning point). t½ = ln 2 / (ν e^{−2G}).
+ */
+export function alphaTunneling(Z, A, Q) {
+  const Zd = Z - 2, Ad = A - 4;
+  const mu = ((4 * Ad) / (4 + Ad)) * AMU_MEV;
+  const R = 1.2 * (Math.cbrt(Ad) + Math.cbrt(4)) + 0.5; // touching radius, fm
+  const coul = 2 * Zd * 1.44; // MeV·fm
+  const b = coul / Q;
+  const x = R / b;
+  const G = (Math.sqrt(2 * mu) / 197.327) * (coul / Math.sqrt(Q)) * (Math.acos(Math.sqrt(x)) - Math.sqrt(x * (1 - x)));
+  const v = Math.sqrt((2 * (Q + 35)) / mu) * 2.998e23; // fm/s inside the well (≈35 MeV deep)
+  const nu = v / (2 * R);
+  const P = Math.exp(-2 * G);
+  // The α has to form as a cluster first: measured "preformation" probabilities are a few %.
+  const preform = 0.03;
+  return { R, b, barrier: coul / R, G, P, nu, preform, halfLife: Math.LN2 / (preform * nu * P) };
+}
+
+/**
+ * Liquid-drop fission barrier (Cohen–Swiatecki fit) from the fissility x = E_c/(2E_s):
+ *   x ≤ 2/3: B_f ≈ 0.38(0.75 − x)·E_s;  x > 2/3: B_f ≈ 0.83(1 − x)³·E_s.
+ */
+export function fissionBarrier(Z, A) {
+  const I = (A - 2 * Z) / A;
+  const Es = 17.9439 * (1 - 1.7826 * I * I) * A ** (2 / 3);
+  const Ec = (0.7053 * Z * Z) / Math.cbrt(A);
+  const x = Ec / (2 * Es);
+  const Bf = x <= 2 / 3 ? 0.38 * (0.75 - x) * Es : 0.83 * (1 - x) ** 3 * Es;
+  return { x, Bf, Es, Ec };
+}
+
+/** Typical asymmetric fission split of compound nucleus (Z, A): fragments and prompt neutrons. */
+export function fissionSplit(Z, A) {
+  const nu = A > 240 ? 3 : 2;
+  const Ah = Math.round((A - nu) * 0.585), Al = A - nu - Ah;
+  // Both fragments keep the parent's proton-to-nucleon ratio (unchanged charge density).
+  const Zh = Math.round((Z * Ah) / (A - nu)), Zl = Z - Zh;
+  const Q = bindingOf(Zh, Ah) + bindingOf(Zl, Al) - bindingOf(Z, A);
+  return { heavy: { Z: Zh, A: Ah }, light: { Z: Zl, A: Al }, neutrons: nu, Q };
+}
+
+/** Pretty half-life: "4.5 billion years", "3.8 days", "0.30 µs". */
+export function halfLifeText(t) {
+  if (t == null) return 'unknown';
+  if (!isFinite(t)) return 'stable';
+  const units = [[YEAR * 1e9, 'billion years'], [YEAR * 1e6, 'million years'], [YEAR, 'years'], [DAY, 'days'], [3600, 'hours'], [60, 'minutes'], [1, 'seconds'], [1e-3, 'ms'], [1e-6, 'µs'], [1e-9, 'ns']];
+  if (t > YEAR * 1e12) return `${sci(t / YEAR)} years`;
+  for (const [s, name] of units) if (t >= s) return `${(t / s).toPrecision(t / s < 10 ? 2 : 3)} ${name}`;
+  return `${sci(t)} s`;
+}

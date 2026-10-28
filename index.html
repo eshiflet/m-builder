@@ -79,6 +79,7 @@
     <section class="viewer-pane" aria-label="Nucleus viewer" id="nuc-panel" hidden>
       <div class="stage">
         <div id="nuc-canvas" class="canvas"></div>
+        <div id="nuc-caption" class="stage-caption"></div>
         <div class="stage-top">
           <div id="nuc-title" class="stage-title"></div>
           <button id="nuc-fit" class="chip" title="Zoom to fit (F)">Fit</button>
@@ -105,6 +106,10 @@
             <span id="nuc-iso"></span>
             <button id="nuc-iso-up" aria-label="One more neutron">+</button>
           </div>
+        </div>
+        <div class="control" id="nuc-decay-wrap">
+          <span class="control-label">Decay &amp; reactions</span>
+          <div id="nuc-decay" class="examples"></div>
         </div>
         <div class="control" id="nuc-mode-wrap">
           <span class="control-label">Oscillation</span>

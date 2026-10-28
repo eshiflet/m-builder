@@ -10,7 +10,8 @@ const $ = (sel) => document.querySelector(sel);
 const viewer = new AtomViewer($('#canvas'));
 const state = { z: null, subshells: [], hidden: new Set(), mode: 'atoms' };
 const molecules = createMoleculeUI({ onTrayChange: showTrayCounts });
-const nucleus = createNucleusUI();
+// When the Nucleus view moves to another element itself (e.g. a decay's daughter), follow it in the table.
+const nucleus = createNucleusUI({ onElementChange: (z) => selectElement(z, { fromNucleus: true }) });
 
 // ---------- Periodic table ----------
 
@@ -80,7 +81,7 @@ function showReadout(z) {
 
 // ---------- Selection ----------
 
-function selectElement(z) {
+function selectElement(z, { fromNucleus = false } = {}) {
   z = Math.max(1, Math.min(ELEMENTS.length, z));
   const el = ELEMENTS[z - 1];
   state.z = z;
@@ -97,7 +98,7 @@ function selectElement(z) {
   document.querySelector(`.cell[data-z="${z}"]`)?.classList.add('selected');
   showReadout(z);
   if (state.mode === 'atoms') history.replaceState(null, '', `#${el.symbol}`);
-  else if (state.mode === 'nucleus') history.replaceState(null, '', `#nuc=${el.symbol}`);
+  else if (state.mode === 'nucleus' && !fromNucleus) history.replaceState(null, '', `#nuc=${el.symbol}`);
 
   const cat = CATEGORIES[el.category];
   $('#stage-title').innerHTML = `
@@ -106,7 +107,7 @@ function selectElement(z) {
 
   viewer.setAtom(state.subshells);
   renderInfo();
-  if (state.mode === 'nucleus') nucleus.setElement(z);
+  if (state.mode === 'nucleus' && !fromNucleus) nucleus.setElement(z);
 }
 
 const outermostN = () => Math.max(...state.subshells.map((s) => s.n));

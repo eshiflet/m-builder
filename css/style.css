@@ -417,6 +417,33 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .mo-diagram .mo-corr { stroke: #6d7a94; stroke-width: 1; stroke-dasharray: 3 3; }
 @media (max-width: 640px) { .mo-layout { grid-template-columns: 1fr; } }
 .chart-note { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
+.stage-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  width: min(92%, 620px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(8, 10, 16, 0.78);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
+.stage-caption:empty { display: none; }
+.decay-chart { width: 100%; max-width: 560px; height: auto; margin-top: 6px; }
+.decay-chart .curve { fill: none; stroke: var(--accent); stroke-width: 2; }
+.decay-chart .tunnel { fill: #ffd75e; opacity: 0.25; }
+.decay-chart .qline { stroke: #ffd75e; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.decay-chart .axis { stroke: var(--line); }
+.decay-chart .lbl { fill: var(--muted); font-size: 11px; }
+.decay-chart .hl { fill: #ffd75e; font-size: 11px; font-weight: 600; }
+.decay-chart .dot { fill: var(--accent); }
+.decay-chart .dot.hi { fill: #ffd75e; }
+.decay-chart .arrow { stroke: #ffd75e; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
 .stage-empty {
   position: absolute;
   inset: 0;
