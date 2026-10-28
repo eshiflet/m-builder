@@ -79,6 +79,7 @@
     <section class="viewer-pane" aria-label="Nucleus viewer" id="nuc-panel" hidden>
       <div class="stage">
         <div id="nuc-canvas" class="canvas"></div>
+        <div id="nuc-chart" class="canvas" hidden></div>
         <div id="nuc-caption" class="stage-caption"></div>
         <div class="stage-top">
           <div id="nuc-title" class="stage-title"></div>
@@ -97,6 +98,14 @@
             <button data-value="nucleus" class="on">Nucleus</button>
             <button data-value="proton">Inside a proton</button>
             <button data-value="neutron">Inside a neutron</button>
+            <button data-value="chart">Chart of nuclides</button>
+          </div>
+        </div>
+        <div class="control" id="nuc-chart-wrap" hidden>
+          <span class="control-label">Color by</span>
+          <div class="segmented" id="nuc-chart-color">
+            <button data-value="mode" class="on">Decay mode</button>
+            <button data-value="binding">Binding energy</button>
           </div>
         </div>
         <div class="control" id="nuc-iso-wrap">

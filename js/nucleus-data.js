@@ -62,7 +62,7 @@ export function haloKappa(iso) {
 }
 
 // Light isotopes that exist even though the mass formula (poor for small A) says otherwise.
-const KNOWN_LIGHT = {
+export const KNOWN_LIGHT = {
   1: [0, 1, 2], 2: [1, 2, 4, 6], 3: [3, 4, 5, 6, 8], 4: [3, 5, 6, 7, 10], 5: [3, 5, 6, 7, 12],
   6: [5, 6, 7, 8, 13, 16], 7: [6, 7, 8], 8: [7, 8, 9, 10],
 };
@@ -210,7 +210,7 @@ const MN_MINUS_MH = 0.782; // (m_n − m_¹H)c², MeV
 
 // Measured decay data (main mode first): Q in MeV, half-life in seconds.
 const YEAR = 3.156e7, DAY = 86400;
-const DECAYS = {
+export const DECAYS = {
   // α emitters
   '92,238': { modes: [['α', 4.270]], t: 4.468e9 * YEAR, fission: true },
   '92,235': { modes: [['α', 4.679]], t: 7.04e8 * YEAR, fission: true },
@@ -356,4 +356,58 @@ export function halfLifeText(t) {
   if (t > YEAR * 1e12) return `${sci(t / YEAR)} years`;
   for (const [s, name] of units) if (t >= s) return `${(t / s).toPrecision(t / s < 10 ? 2 : 3)} ${name}`;
   return `${sci(t)} s`;
+}
+
+// ---------- chart of nuclides ----------
+
+// Stable nuclides (mass numbers by Z): about 250, those never observed to decay.
+const STABLE_A = {
+  1: [1, 2], 2: [3, 4], 3: [6, 7], 4: [9], 5: [10, 11], 6: [12, 13], 7: [14, 15], 8: [16, 17, 18], 9: [19], 10: [20, 21, 22],
+  11: [23], 12: [24, 25, 26], 13: [27], 14: [28, 29, 30], 15: [31], 16: [32, 33, 34, 36], 17: [35, 37], 18: [36, 38, 40], 19: [39, 41], 20: [40, 42, 43, 44, 46],
+  21: [45], 22: [46, 47, 48, 49, 50], 23: [51], 24: [50, 52, 53, 54], 25: [55], 26: [54, 56, 57, 58], 27: [59], 28: [58, 60, 61, 62, 64], 29: [63, 65], 30: [64, 66, 67, 68, 70],
+  31: [69, 71], 32: [70, 72, 73, 74], 33: [75], 34: [74, 76, 77, 78, 80], 35: [79, 81], 36: [80, 82, 83, 84, 86], 37: [85], 38: [84, 86, 87, 88], 39: [89], 40: [90, 91, 92, 94],
+  41: [93], 42: [92, 94, 95, 96, 97, 98], 44: [96, 98, 99, 100, 101, 102, 104], 45: [103], 46: [102, 104, 105, 106, 108, 110], 47: [107, 109], 48: [106, 108, 110, 111, 112, 114], 49: [113],
+  50: [112, 114, 115, 116, 117, 118, 119, 120, 122, 124], 51: [121, 123], 52: [120, 122, 123, 124, 125, 126], 53: [127], 54: [126, 128, 129, 130, 131, 132, 134], 55: [133],
+  56: [132, 134, 135, 136, 137, 138], 57: [139], 58: [136, 138, 140, 142], 59: [141], 60: [142, 143, 145, 146, 148], 62: [144, 149, 150, 152, 154], 63: [153],
+  64: [154, 155, 156, 157, 158, 160], 65: [159], 66: [156, 158, 160, 161, 162, 163, 164], 67: [165], 68: [162, 164, 166, 167, 168, 170], 69: [169],
+  70: [168, 170, 171, 172, 173, 174, 176], 71: [175], 72: [176, 177, 178, 179, 180], 73: [181], 74: [182, 183, 184, 186], 75: [185], 76: [187, 188, 189, 190, 192],
+  77: [191, 193], 78: [192, 194, 195, 196, 198], 79: [197], 80: [196, 198, 199, 200, 201, 202, 204], 81: [203, 205], 82: [204, 206, 207, 208],
+};
+// Radioactive but so long-lived they survive from before the Earth formed.
+const PRIMORDIAL = new Set(['19,40', '20,48', '23,50', '32,76', '34,82', '36,78', '37,87', '40,96', '42,100', '48,113', '48,116', '49,115', '52,128', '52,130',
+  '54,124', '54,136', '56,130', '57,138', '60,144', '60,150', '62,147', '62,148', '63,151', '64,152', '71,176', '72,174', '74,180', '75,187', '76,184', '76,186',
+  '78,190', '83,209', '90,232', '92,235', '92,238']);
+
+export const isStable = (Z, A) => STABLE_A[Z]?.includes(A) ?? false;
+
+/** A rough line of β stability: the most stable Z for mass number A. */
+export const stableZ = (A) => A / (1.98 + 0.0155 * A ** (2 / 3));
+
+/**
+ * Classify a nuclide for the chart: { kind, mode, measured } or null if it isn't
+ * expected to be bound. kind: 'stable' | 'primordial' | 'radioactive'.
+ */
+export function classifyNuclide(Z, N) {
+  const A = Z + N;
+  if (Z < 1 || A < 1) return null;
+  const key = `${Z},${A}`;
+  if (isStable(Z, A)) return { kind: 'stable', mode: 'stable', measured: true };
+  const known = DECAYS[key];
+  if (PRIMORDIAL.has(key)) return { kind: 'primordial', mode: known?.modes[0][0] ?? (Z >= 62 && N > 1.4 * Z ? 'α' : 'β⁻'), measured: true, halfLife: known?.t };
+  if (known) return { kind: 'radioactive', mode: known.modes[0][0], measured: true, halfLife: known.t };
+  // Expected to be bound at all? Light nuclei from the list of known ones; heavier from the mass formula.
+  if (Z <= 8) { if (!KNOWN_LIGHT[Z]?.includes(N)) return null; }
+  else {
+    // Drip lines from two-nucleon separation energies (as mass tables do), which avoids
+    // the mass formula's odd–even pairing term chopping the edges into a comb.
+    const B = (z, a) => bindingEnergy(z, a).B;
+    const s2n = B(Z, A) - B(Z, A - 2), s2p = B(Z, A) - B(Z - 2, A - 2);
+    if (!(s2n > 0 && s2p > 0)) return null;
+  }
+  // Predicted decay mode: β toward the stability line; α or fission for the heaviest.
+  const q = qValues(Z, A);
+  let mode = Z < stableZ(A) ? 'β⁻' : 'β⁺';
+  if (Z >= 84 && q.alpha > 4 && Z >= stableZ(A) - 3) mode = 'α';
+  if (Z >= 100 && A >= 256 && Z % 2 === 0 && N % 2 === 0 && fissionBarrier(Z, A).Bf < 2.5) mode = 'SF';
+  return { kind: 'radioactive', mode, measured: false };
 }

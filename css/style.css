@@ -417,6 +417,9 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .mo-diagram .mo-corr { stroke: #6d7a94; stroke-width: 1; stroke-dasharray: 3 3; }
 @media (max-width: 640px) { .mo-layout { grid-template-columns: 1fr; } }
 .chart-note { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
+.nuclide-canvas { display: block; cursor: crosshair; touch-action: none; }
+.chart-card { display: flex; align-items: center; gap: 12px; margin: 10px 0; padding: 10px; border-radius: 8px; background: var(--panel-2); }
+.chart-card .big { font-size: 26px; font-weight: 700; min-width: 70px; text-align: center; }
 .stage-caption {
   position: absolute;
   left: 50%;

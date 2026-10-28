@@ -5,6 +5,7 @@ import {
   allowedNeutrons, rotationPeriod, valenceCounts, BABYSECOND, NUCLEONS, QUARKS,
   decayInfo, alphaTunneling, fissionBarrier, fissionSplit, halfLifeText, bindingOf, AMU_MEV,
 } from './nucleus-data.js';
+import { NuclideChart, MODE_COLORS, describeCell } from './nuclide-chart.js';
 import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, PION_COLORS, COLOR_CHARGES } from './nucleus-viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -144,6 +145,9 @@ export function createNucleusUI({ onElementChange } = {}) {
   let spin = 10;
   let stats = null;
   let eventInfo = null; // the decay or reaction playing, if any
+  let chart = null; // the chart of nuclides, built the first time it's shown
+  let chartPick = null; // the square picked on the chart
+  let active = false;
 
   viewer.onScaleChange = (fm) => { $('#nuc-scale').textContent = `view width ≈ ${fm < 10 ? fm.toFixed(1) : fm.toFixed(0)} fm`; };
   viewer.onClock = (t, lagging) => {
@@ -176,6 +180,11 @@ export function createNucleusUI({ onElementChange } = {}) {
     else setMode('none');
     autoRate();
     history.replaceState(null, '', `#nuc=${iso.symbol}${iso.isDefault ? '' : `-${iso.A}`}`);
+    if (chart) {
+      chart.setSelected(iso.Z, iso.N);
+      chartPick = chart.byKey.get(`${iso.Z},${iso.N}`) ?? null;
+      if (view === 'chart') chart.focus(iso.Z, iso.N, 14); // picking an element in the table jumps there
+    }
     render();
   }
 
@@ -264,6 +273,8 @@ export function createNucleusUI({ onElementChange } = {}) {
       : `${COLOR_CHARGES.map((c, k) => `<span><i style="background:${c}"></i>${['red', 'green', 'blue'][k]}</span>`).join('')}<span><i style="background:#ffe9a8"></i>gluon</span><span><i style="background:#9ef0ff"></i>sea quark pair</span>`;
 
     renderDecayButtons();
+    $('#nuc-chart-wrap').hidden = view !== 'chart';
+    if (view === 'chart') return renderChart();
     if (view !== 'nucleus') return renderNucleon();
     if (eventInfo) return renderEvent();
 
@@ -468,6 +479,56 @@ export function createNucleusUI({ onElementChange } = {}) {
       <p class="note">The animation is schematic: real α decay waits ${e.type === 'α' ? 'on average the half-life for each nucleus' : 'its turn'}, scission takes ~10⁻²⁰ s, and the particles here move far slower than real ones.</p>`;
   }
 
+  // ---------- chart of nuclides ----------
+
+  function showChart(on) {
+    $('#nuc-canvas').hidden = on;
+    $('#nuc-chart').hidden = !on;
+    viewer.setActive(active && !on);
+    if (!on) return;
+    if (!chart) {
+      chart = new NuclideChart($('#nuc-chart'));
+      chart.onSelect = (cell) => { chartPick = cell; render(); };
+      chart.onOpen = (cell) => openInNucleus(cell);
+    }
+    chart.setSelected(iso.Z, iso.N);
+    chartPick = chart.byKey.get(`${iso.Z},${iso.N}`) ?? null;
+  }
+
+  function openInNucleus(cell) {
+    view = 'nucleus';
+    document.querySelectorAll('#nuc-view button').forEach((x) => x.classList.toggle('on', x.dataset.value === 'nucleus'));
+    showChart(false);
+    viewer.setView('nucleus');
+    setElement(cell.Z, cell.A);
+    onElementChange?.(cell.Z);
+  }
+
+  function renderChart() {
+    $('#nuc-title').innerHTML = '<span><strong>Chart of nuclides</strong><br><span class="muted">scroll to zoom · drag to pan · click to pick</span></span>';
+    $('#nuc-caption').innerHTML = '';
+    $('#nuc-clock').hidden = true;
+    $('#nuc-scale').textContent = '';
+    $('#nuc-legend').innerHTML = chart?.colorMode === 'binding'
+      ? '<span><i style="background:rgb(30,40,110)"></i>5 MeV</span><span><i style="background:rgb(60,180,140)"></i>7 MeV</span><span><i style="background:rgb(255,230,90)"></i>8.8 MeV per nucleon</span>'
+      : Object.entries({ stable: 'stable', 'β⁻': 'β⁻', 'β⁺': 'β⁺ / EC', 'α': 'α', SF: 'fission' }).map(([k, l]) => `<span><i style="background:${MODE_COLORS[k]}"></i>${l}</span>`).join('');
+    const c = chartPick;
+    const card = c ? (() => {
+      const d = describeCell(c);
+      return `<div class="chart-card"><div class="big"><sup>${d.sup}</sup>${d.symbol}</div><div><b>${d.title}</b><br><span class="muted">${d.line}</span><br>
+        <button class="chip" data-open-chart>View this nucleus in 3D ▶</button></div></div>`;
+    })() : '<p class="muted">Click a square to see that nucleus; double-click to open it in 3D.</p>';
+    const total = chart ? chart.cells.length : 0;
+    $('#nuc-info').innerHTML = `
+      <div class="info-head"><div><h2>Chart of nuclides</h2>
+        <div class="muted">${total.toLocaleString()} nuclei shown · 250 stable</div></div></div>
+      ${card}
+      <p class="explain">Every nucleus is a square: neutrons N across, protons Z up. The ~250 <b>stable</b> ones (white) form a narrow <b>valley of stability</b>. It starts along N = Z (dashed gold line) for light elements and bends toward extra neutrons for heavy ones (lead-208 has 126 neutrons for 82 protons), because extra neutrons dilute the protons’ Coulomb repulsion.</p>
+      <p class="explain">Off the valley, nuclei decay back toward it: neutron-rich ones by <b>β⁻</b> (blue), proton-rich ones by <b>β⁺ or electron capture</b> (red), heavy ones by <b>α</b> (yellow), and the heaviest by <b>spontaneous fission</b> (green). The colored region ends at the <b>drip lines</b>, where the next neutron or proton wouldn’t even be bound. Outlined squares are primordial: radioactive but long-lived enough to survive since before the Earth formed (²³⁸U, ²³²Th, ⁴⁰K…).</p>
+      <p class="explain">Dashed lines mark the <b>magic numbers</b> 2, 8, 20, 28, 50, 82, 126: closed shells where nuclei are extra stable and stable isotopes cluster (tin, Z = 50, has ten). Theory predicts an “island of stability” near Z ≈ 114, N = 184, which today’s superheavy-element experiments are trying to reach.</p>
+      <p class="note">Brighter squares are measured (stable lists, plus decay data for about 60 nuclides here); faded ones are predicted from the semi-empirical mass formula, including the drip lines. About 3,300 nuclei have been observed so far; models predict roughly 6,000–7,000 bound ones in all. Color by <b>Binding energy</b> to see the iron–nickel peak that makes both fusion of light nuclei and fission of heavy ones release energy.</p>`;
+  }
+
   function renderNucleon() {
       const kind = view;
       const info = NUCLEONS[kind];
@@ -513,9 +574,11 @@ export function createNucleusUI({ onElementChange } = {}) {
   $('#nuc-view').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
+    if (eventInfo) { viewer.stopEvent(true); eventInfo = null; $('#nuc-caption').innerHTML = ''; }
     view = b.dataset.value;
     document.querySelectorAll('#nuc-view button').forEach((x) => x.classList.toggle('on', x === b));
-    viewer.setView(view === 'nucleus' ? 'nucleus' : 'nucleon', view);
+    showChart(view === 'chart');
+    if (view !== 'chart') viewer.setView(view === 'nucleus' ? 'nucleus' : 'nucleon', view);
     render();
   });
   $('#nuc-style').addEventListener('click', (e) => {
@@ -561,7 +624,17 @@ export function createNucleusUI({ onElementChange } = {}) {
     document.querySelectorAll('#nuc-flow button').forEach((x) => x.classList.toggle('on', x === b));
     viewer.setFlow(b.dataset.value);
   });
-  $('#nuc-fit').addEventListener('click', () => viewer.fit());
+  $('#nuc-fit').addEventListener('click', () => (view === 'chart' ? chart?.fit() : viewer.fit()));
+  $('#nuc-chart-color').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    document.querySelectorAll('#nuc-chart-color button').forEach((x) => x.classList.toggle('on', x === b));
+    chart?.setColorMode(b.dataset.value);
+    render();
+  });
+  $('#nuc-info').addEventListener('click', (e) => {
+    if (e.target.closest('[data-open-chart]') && chartPick) openInNucleus(chartPick);
+  });
   $('#nuc-decay').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -578,7 +651,7 @@ export function createNucleusUI({ onElementChange } = {}) {
 
   return {
     setElement,
-    setActive(on) { viewer.setActive(on); },
+    setActive(on) { active = on; viewer.setActive(on && view !== 'chart'); },
     fit() { viewer.fit(); },
   };
 }

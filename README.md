@@ -216,6 +216,19 @@ others are predicted from the mass formula and labeled as such.
 
 After a decay, **Show** jumps to the daughter nucleus.
 
+**Chart of nuclides** (a View option) lays out every known and predicted
+nucleus as a square: neutrons N across, protons Z up. The ~250 stable nuclei
+form the valley of stability, which follows N = Z for light elements and bends
+toward extra neutrons for heavy ones. Colors show the decay mode: β⁻ (blue),
+β⁺/electron capture (red), α (yellow), spontaneous fission (green). Measured
+modes are solid and predicted ones are faded. Outlined squares are primordial
+(long-lived enough to survive since the Earth formed). Dashed lines mark the
+magic numbers 2, 8, 20, 28, 50, 82, 126. The outer edges are the drip lines,
+where the mass formula's two-neutron or two-proton separation energy goes
+negative. **Binding energy** recolors by B/A, which peaks near iron. Scroll to
+zoom, drag to pan, click a square for details, and double-click to open that
+nucleus in 3D.
+
 **Quarks** shows three quarks inside every nucleon, with gluon lines and color
 charges that keep swapping. **Inside a proton / neutron** zooms into one
 nucleon: valence quarks (uud or udd) with their charges, wiggling gluon flux
@@ -257,6 +270,7 @@ Inspired by MIT's [Visualizing the Nucleus](https://www.youtube.com/watch?v=ach9
 - `js/forcefield.js`: force field (including H-bonds), FIRE minimizer, conformer search, and docking
 - `js/conformer-worker.js`: runs the conformer search off the main thread
 - `js/vibrations.js`: valence force field, normal modes, IR intensities, measured reference frequencies
+- `js/nuclide-chart.js`: chart of nuclides canvas (zoom, pan, pick)
 - `js/eht.js`: Extended Hückel molecular orbitals (STO-3G overlaps, Jacobi eigensolver)
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI
