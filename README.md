@@ -159,8 +159,13 @@ Very light nuclei (A < 40) are less reliable, so a couple use measured values.
 - Breathing: 80A^-⅓ MeV.
 - Quadrupole: 63A^-⅓ MeV.
 - Rotation of deformed nuclei: E(2⁺) from the Grodzins relation, with the turn
-  period at spin J from a rigid rotor, ω = (2J+1)E(2⁺)/6ħ. It is simulated in the
-  rotating frame, so the nucleons move in lockstep.
+  period at spin J from a rigid rotor, ω = (2J+1)E(2⁺)/6ħ. Nuclei don't rotate
+  rigidly: pairing makes them partly superfluid. The nucleons are carried by a
+  blend of rigid rotation (v = Ω × r) and the irrotational flow inside a rotating
+  spheroid (v = Ωk·(0, z, y), k = (b² − c²)/(b² + c²), Lamb §110), in which the
+  bulge travels around while the nucleons slosh. The blend is chosen so the moment
+  of inertia matches I = 3ħ²/E(2⁺): about 40% of rigid for ²³⁸U, versus 5% for an
+  ideal fluid. **Flow** switches between Rigid, Measured mix and Superfluid.
 
 Amplitudes are exaggerated so they can be seen.
 
