@@ -2,11 +2,11 @@ import { ELEMENTS } from './elements.js';
 import { EXAMPLES } from './molecule-data.js';
 import {
   buildMolecule, parseFormula, hillKey, formulaHTML, chargeText,
-  isomersOf, searchLibrary, entryCounts, entryCharge, smilesCounts, needsConformers,
+  isomersOf, searchLibrary, entryCounts, entryCharge, smilesCounts, needsConformers, computeConformers,
 } from './molecule.js';
 import { KNOWN_MOLECULES } from './molecule-data.js';
 import { configHTML } from './electron-config.js';
-import { MoleculeViewer, atomColor, SIGMA_COLOR, H1S_COLOR, TRANSFER_COLOR } from './molecule-viewer.js';
+import { MoleculeViewer, atomColor, SIGMA_COLOR, H1S_COLOR, TRANSFER_COLOR, HBOND_COLOR } from './molecule-viewer.js';
 import { PHASE_COLORS } from './viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -62,15 +62,21 @@ export function createMoleculeUI({ onTrayChange }) {
     setTray(counts, q, { variant: Math.max(0, isomersOf(counts, q).indexOf(entry)), ...opts });
   }
 
-  // Building conformers takes up to ~1.5 s for big molecules: show a message first.
+  // Conformer searches run in a worker (a few seconds for pairs of molecules).
   let pending = 0;
   function update() {
-    const target = customSmiles ?? isomersOf(tray, charge)[variant]?.smiles;
+    const ticket = ++pending;
+    let target = null;
+    try { target = customSmiles ?? isomersOf(tray, charge)[variant]?.smiles; } catch { /* reported by render */ }
     if (target && needsConformers(target)) {
       viewer.setMolecule(null);
-      $('#mol-empty').innerHTML = '<div>Building 3D structure…<br><span class="muted">relaxing the geometry with a force field</span></div>';
-      const ticket = ++pending;
-      setTimeout(() => { if (ticket === pending) render(); }, 40);
+      renderTray();
+      onTrayChange?.(tray);
+      const several = target.includes('.');
+      $('#mol-empty').innerHTML = `<div>Building 3D structure…<br><span class="muted">${several
+        ? 'docking the molecules by their hydrogen bonds (a few seconds)'
+        : 'relaxing the geometry with a force field'}</span></div>`;
+      computeConformers(target).then(() => { if (ticket === pending) render(); });
       return;
     }
     render();
@@ -151,6 +157,13 @@ export function createMoleculeUI({ onTrayChange }) {
   const unnamed = () => (mol.ionic ? 'Ionic compound' : mol.charge ? 'Unnamed ion' : 'Unnamed molecule');
 
   function renderLegend() {
+    renderLegendBase();
+    if (mol?.hbonds?.length && viewer.options.hbonds) {
+      $('#mol-legend').insertAdjacentHTML('beforeend', `<span><i style="background:${HBOND_COLOR}"></i>hydrogen bond</span>`);
+    }
+  }
+
+  function renderLegendBase() {
     $('#mol-legend').innerHTML = view === 'orbitals' && mol?.ionic
       ? `<span><i style="background:${TRANSFER_COLOR}"></i>electron transfer</span>
          <span><i style="background:${atomColor(mol.anion.symbol)}"></i>filled anion shell</span>`
@@ -166,6 +179,15 @@ export function createMoleculeUI({ onTrayChange }) {
         : view === 'density' && mol && !mol.error
           ? [...new Set(mol.atoms.map((a) => a.symbol))].map((s) => `<span><i style="background:${atomColor(s)}"></i>${s}</span>`).join('')
           : '';
+  }
+
+  function hbondNote() {
+    const n = mol.hbonds.length;
+    if (!n) return '';
+    const fragments = mol.smiles?.split('.').length ?? 1;
+    const where = fragments > 1 ? 'between the molecules' : 'within the molecule';
+    const energy = mol.hbondEnergy != null ? ` Together they contribute about ${Math.abs(mol.hbondEnergy).toFixed(1)} kcal/mol of attraction in this force field.` : '';
+    return `<p class="explain">${n} hydrogen bond${n > 1 ? 's' : ''} ${where} (dashed blue): a hydrogen on N or O, slightly positive, points at a lone pair on another N or O. Each is roughly 5–20 times weaker than a covalent bond, but together they hold DNA’s strands together and make water boil at 100 °C.${energy}</p>`;
   }
 
   function explainIonic() {
@@ -267,11 +289,15 @@ export function createMoleculeUI({ onTrayChange }) {
       ${why ? `<p class="explain">${why}</p>` : ''}
       ${mol.note ? `<p class="explain">${mol.note}</p>` : ''}
       ${chargeNote}
-      ${mol.conformers?.length > 1 ? `<p class="explain muted">This molecule has ${mol.conformers.length} distinct low-energy shapes (conformers), found by relaxing it from different random starts. Pick one under <b>Shapes</b>; they interconvert at room temperature by rotating around single bonds or flexing rings.</p>` : ''}
+      ${hbondNote()}
+      ${mol.conformers?.length > 1 ? (mol.smiles?.includes('.')
+        ? `<p class="explain muted">The search found ${mol.conformers.length} distinct ways for these molecules to sit together. The lowest has the most and best-aligned hydrogen bonds; pick others under <b>Shapes</b> to see what breaking or shifting them costs.</p>`
+        : `<p class="explain muted">This molecule has ${mol.conformers.length} distinct low-energy shapes (conformers), found by relaxing it from different random starts. Pick one under <b>Shapes</b>; they interconvert at room temperature by rotating around single bonds or flexing rings.</p>`) : ''}
       <div class="facts">
         ${angleRows.length ? `<div><h3>Bond angles${allAngles ? '' : ` at ${atoms[viewer.selected].symbol}`}</h3><ul>${angleRows.join('')}</ul></div>`
           : allAngles ? '' : `<div><h3>Bond angles</h3><p class="muted">${viewer.selected == null ? 'Click an atom in the 3D view to show the angles around it.' : 'This atom has only one bond.'}</p></div>`}
         <div><h3>Bonds</h3><ul>${bondRows.join('')}</ul></div>
+        ${mol.hbonds.length ? `<div><h3>Hydrogen bonds</h3><ul>${mol.hbonds.map((hb) => `<li>${atoms[hb.d].symbol}–H···${atoms[hb.a].symbol} <span class="muted">${hb.length.toFixed(2)} Å · ${hb.angle.toFixed(0)}°</span></li>`).join('')}</ul></div>` : ''}
         ${ionRows ? `<div><h3>Ions</h3><ul>${ionRows.join('')}</ul></div>` : `<div><h3>Hybridization</h3><ul>${atomRows.join('')}</ul></div>`}
       </div>
       <p class="note">${VIEW_TEXT[mol.ionic && view !== 'structure' ? `ionic${view[0].toUpperCase()}${view.slice(1)}` : view]}</p>
@@ -348,7 +374,7 @@ export function createMoleculeUI({ onTrayChange }) {
     viewer.setView(view);
     if (mol && !mol.error) renderInfo();
   });
-  for (const name of ['angles', 'lengths', 'lonePairs']) {
+  for (const name of ['angles', 'lengths', 'lonePairs', 'hbonds']) {
     $(`#opt-${name}`).addEventListener('change', (e) => {
       viewer.setOption(name, e.target.checked);
       renderLegend();

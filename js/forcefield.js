@@ -7,6 +7,9 @@
 //     + Σ ki · V²                              planarity at sp² centers (V = signed volume)
 //     + Σ kc · max(0, V₀ − s·V)²               chirality (sign of the neighbors' volume, from @/@@)
 //     + Σ kr · max(0, d₀ − d)²                 steric repulsion between non-bonded atoms
+//     + Σ D₀ [5(R₀/R)¹² − 6(R₀/R)¹⁰] cos⁴θ · S(R)   hydrogen bonds D–H···A (DREIDING form):
+//                                                R = donor–acceptor distance, θ = D–H···A angle,
+//                                                S = smooth switch to zero between 3.1 and 3.6 Å
 //
 // Energies come out roughly in kcal/mol. Coordinates are found by minimizing E
 // from several random starts (FIRE minimizer); distinct minima are conformers.
@@ -67,6 +70,39 @@ export function hybridization(graph) {
   return hyb;
 }
 
+/** Bond counts from one atom to every other (Infinity across separate molecules). */
+function graphDistances(near, from) {
+  const dist = Array(near.length).fill(Infinity);
+  dist[from] = 0;
+  const queue = [from];
+  while (queue.length) {
+    const u = queue.shift();
+    for (const v of near[u]) if (dist[v] === Infinity) { dist[v] = dist[u] + 1; queue.push(v); }
+  }
+  return dist;
+}
+
+/**
+ * Hydrogen-bond donors ({ h, d }: H and the N/O/F it's on) and acceptors
+ * (N/O/F with a lone pair free to accept; amide/aniline-type N excluded).
+ */
+export function hbondSites(graph, hyb = hybridization(graph)) {
+  const { atoms } = graph;
+  const polar = (s) => s === 'N' || s === 'O' || s === 'F';
+  const donors = [];
+  const acceptors = [];
+  atoms.forEach((a, i) => {
+    if (a.symbol === 'H' && a.nbrs.length === 1 && polar(atoms[a.nbrs[0]].symbol)) donors.push({ h: i, d: a.nbrs[0] });
+    if (!polar(a.symbol) || a.charge > 0) return;
+    if (a.symbol === 'N') {
+      const conjugated = hyb[i] === 'sp2' && a.nbrs.length === 3; // lone pair is in the π system
+      if (conjugated || a.nbrs.length > 3) return;
+    }
+    acceptors.push(i);
+  });
+  return { donors, acceptors };
+}
+
 function buildTerms(graph) {
   const { atoms, bonds } = graph;
   const n = atoms.length;
@@ -80,20 +116,47 @@ function buildTerms(graph) {
 
   const bondTerms = bonds.map((b) => ({ i: b.a, j: b.b, r0: restLength(atoms[b.a].symbol, atoms[b.b].symbol, b.order), k: 600 }));
 
+  // Smallest ring through a–c–b: shortest path from a to b that avoids c, plus 2.
+  const ringSize = (a, c, b) => {
+    const dist = new Map([[a, 0]]);
+    const queue = [a];
+    while (queue.length) {
+      const u = queue.shift();
+      if (dist.get(u) >= 6) break;
+      for (const v of atoms[u].nbrs) {
+        if (v === c || dist.has(v)) continue;
+        dist.set(v, dist.get(u) + 1);
+        if (v === b) return dist.get(v) + 2;
+        queue.push(v);
+      }
+    }
+    return Infinity;
+  };
   const angleTerms = [];
   for (let c = 0; c < n; c++) {
     const nb = atoms[c].nbrs;
+    const pairs = [];
     for (let p = 0; p < nb.length; p++) {
       for (let q = p + 1; q < nb.length; q++) {
         const a = nb[p], b = nb[q];
-        let theta;
-        if (isBonded(a, b)) theta = 60; // three-membered ring
-        else if (atoms[a].nbrs.some((x) => x !== c && atoms[b].nbrs.includes(x))) theta = 88; // four-membered ring
-        else if (hyb[c] === 'sp') theta = 180;
-        else if (hyb[c] === 'sp2') theta = 120;
-        else theta = { O: 108.5, N: 107.5, S: 99, P: 100 }[atoms[c].symbol] ?? 109.47;
-        angleTerms.push({ i: a, j: c, k2: b, cos0: Math.cos(theta * DEG), k: 120 });
+        const ring = ringSize(a, c, b);
+        let theta = null; // null: not set by a small ring
+        if (ring === 3) theta = 60;
+        else if (ring === 4) theta = 88;
+        else if (ring === 5) theta = hyb[c] === 'sp2' ? 108 : 104.5;
+        pairs.push({ a, b, theta });
       }
+    }
+    const ideal = hyb[c] === 'sp' ? 180 : hyb[c] === 'sp2' ? 120
+      : { O: 108.5, N: 107.5, S: 99, P: 100 }[atoms[c].symbol] ?? 109.47;
+    // A flat atom's three angles add to 360°: what a small ring takes, the others share.
+    const fixed = pairs.filter((x) => x.theta != null);
+    const free = pairs.filter((x) => x.theta == null);
+    const share = hyb[c] === 'sp2' && nb.length === 3 && fixed.length && free.length
+      ? (360 - fixed.reduce((sum, x) => sum + x.theta, 0)) / free.length
+      : ideal;
+    for (const { a, b, theta } of pairs) {
+      angleTerms.push({ i: a, j: c, k2: b, cos0: Math.cos((theta ?? share) * DEG), k: 120 });
     }
   }
 
@@ -161,16 +224,34 @@ function buildTerms(graph) {
     out.delete(i);
     return out;
   });
+  // Hydrogen bonds: H on N/O/F (donor) toward an N/O/F with a lone pair (acceptor),
+  // at least four bonds apart (or in a different molecule).
+  const { donors, acceptors } = hbondSites(graph, hyb);
+  const hbondTerms = [];
+  for (const { h, d } of donors) {
+    const dist = graphDistances(near, h);
+    for (const a of acceptors) {
+      if (a === d || dist[a] < 4) continue;
+      // Typical donor–acceptor distances: O–H···O 2.85 Å, N–H···O 2.9 Å, N–H···N 3.0 Å.
+      const R0 = { OO: 2.85, ON: 2.9, NO: 2.9, NN: 3.0 }[atoms[d].symbol + atoms[a].symbol] ?? 2.85;
+      hbondTerms.push({ d, h, a, D0: 4.5, R0 });
+    }
+  }
+  const isHbondPair = (i, j) => hbondTerms.some((t) => (t.h === i && t.a === j) || (t.h === j && t.a === i));
+  const isDonorAcceptor = (i, j) => hbondTerms.some((t) => (t.d === i && t.a === j) || (t.d === j && t.a === i));
+
   const pairTerms = [];
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       if (within2[i].has(j)) continue;
       const is14 = [...near[i]].some((x) => [...near[x]].some((y) => near[y].has(j)));
-      const d0 = ((VDW[atoms[i].symbol] ?? 1.8) + (VDW[atoms[j].symbol] ?? 1.8)) * (is14 ? 0.62 : 0.78);
+      let d0 = ((VDW[atoms[i].symbol] ?? 1.8) + (VDW[atoms[j].symbol] ?? 1.8)) * (is14 ? 0.62 : 0.78);
+      if (isHbondPair(i, j)) d0 = 1.55; // let H approach the acceptor's lone pair
+      else if (isDonorAcceptor(i, j)) d0 = Math.min(d0, 2.45);
       pairTerms.push({ i, j, d0, k: 12 });
     }
   }
-  return { n, hyb, bondTerms, angleTerms, torsionTerms, planarTerms, chiralTerms, pairTerms };
+  return { n, hyb, bondTerms, angleTerms, torsionTerms, planarTerms, chiralTerms, pairTerms, hbondTerms };
 }
 
 /**
@@ -259,6 +340,37 @@ function evaluate(T, x, g, phase) {
   }
 
   if (phase >= 2) {
+    const RON = 3.1, ROFF = 3.6;
+    for (const t of T.hbondTerms) {
+      const pd = v(t.d), ph = v(t.h), pa = v(t.a);
+      const da = sub(pd, pa);
+      const R = Math.hypot(...da) || 1e-9;
+      if (R >= ROFF) continue;
+      // Angle at H between H→D and H→A; linear (cos = −1) is best.
+      const u = sub(pd, ph), w = sub(pa, ph);
+      const lu = Math.hypot(...u) || 1e-9, lw = Math.hypot(...w) || 1e-9;
+      const cos = dot(u, w) / (lu * lw);
+      if (cos >= 0) continue; // D–H···A bent past 90°: no bond
+      const wAng = cos ** 4;
+      const q = t.R0 / R;
+      const q10 = q ** 10, q12 = q10 * q * q;
+      const U = 5 * q12 - 6 * q10;
+      const dU = (-60 * q12 + 60 * q10) / R;
+      let S = 1, dS = 0;
+      if (R > RON) {
+        const r2 = R * R, on2 = RON * RON, off2 = ROFF * ROFF, den = (off2 - on2) ** 3;
+        S = ((off2 - r2) ** 2 * (off2 + 2 * r2 - 3 * on2)) / den;
+        dS = (12 * R * (off2 - r2) * (on2 - r2)) / den;
+      }
+      E += t.D0 * U * S * wAng;
+      const fR = (t.D0 * (dU * S + U * dS) * wAng) / R; // dE/dR, along D−A
+      addG(t.d, da, fR); addG(t.a, da, -fR);
+      const fc = t.D0 * U * S * 4 * cos ** 3; // dE/dcos
+      const gd = [w[0] / (lu * lw) - (cos * u[0]) / (lu * lu), w[1] / (lu * lw) - (cos * u[1]) / (lu * lu), w[2] / (lu * lw) - (cos * u[2]) / (lu * lu)];
+      const ga = [u[0] / (lu * lw) - (cos * w[0]) / (lw * lw), u[1] / (lu * lw) - (cos * w[1]) / (lw * lw), u[2] / (lu * lw) - (cos * w[2]) / (lw * lw)];
+      addG(t.d, gd, fc); addG(t.a, ga, fc);
+      addG(t.h, [gd[0] + ga[0], gd[1] + ga[1], gd[2] + ga[2]], -fc);
+    }
     for (const t of T.pairTerms) {
       const d = sub(v(t.i), v(t.j));
       const r = Math.hypot(...d) || 1e-9;
@@ -305,6 +417,81 @@ function minimize(T, x, steps, phase) {
   return E;
 }
 
+/** Atom index lists, one per separate molecule. */
+function fragmentLists(graph) {
+  const seen = new Set();
+  const lists = [];
+  graph.atoms.forEach((_, i) => {
+    if (seen.has(i)) return;
+    const list = [];
+    const stack = [i];
+    while (stack.length) {
+      const u = stack.pop();
+      if (seen.has(u)) continue;
+      seen.add(u);
+      list.push(u);
+      stack.push(...graph.atoms[u].nbrs);
+    }
+    lists.push(list);
+  });
+  return lists;
+}
+
+const countFragments = (graph) => fragmentLists(graph).length;
+
+/** Rotation matrix taking unit vector a onto unit vector b, then spinning by `spin` about b. */
+function alignRotation(a, b, spin) {
+  const rot = (axis, t) => {
+    const [x, y, z] = axis, c = Math.cos(t), s = Math.sin(t), C = 1 - c;
+    return [[c + x * x * C, x * y * C - z * s, x * z * C + y * s], [y * x * C + z * s, c + y * y * C, y * z * C - x * s], [z * x * C - y * s, z * y * C + x * s, c + z * z * C]];
+  };
+  const mul = (A, B) => A.map((row) => [0, 1, 2].map((j) => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
+  let axis = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const sinT = Math.hypot(...axis), cosT = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  if (sinT < 1e-6) axis = Math.abs(a[0]) < 0.9 ? [0, -a[2], a[1]] : [-a[2], 0, a[0]];
+  const an = Math.hypot(...axis);
+  axis = axis.map((v) => v / an);
+  return mul(rot(b, spin), rot(axis, Math.atan2(sinT, cosT)));
+}
+
+/** Move one molecule so acceptor a sits 1.95 Å out along D→H, lone pair facing the H. */
+function dockAcceptor(x, graph, fragAtoms, d, h, a, spin) {
+  const P = (i) => [x[3 * i], x[3 * i + 1], x[3 * i + 2]];
+  const norm = (v) => { const l = Math.hypot(...v) || 1; return v.map((c) => c / l); };
+  const u = norm(P(h).map((c, k) => c - P(d)[k]));
+  const nb = graph.atoms[a].nbrs;
+  const mid = nb.reduce((acc, i) => acc.map((c, k) => c + P(i)[k] / nb.length), [0, 0, 0]);
+  const lonePair = norm(P(a).map((c, k) => c - mid[k])); // points away from the acceptor's bonds
+  const R = alignRotation(lonePair, u.map((c) => -c), spin);
+  const pa = P(a);
+  const target = P(h).map((c, k) => c + 1.95 * u[k]);
+  for (const i of fragAtoms) {
+    const p = P(i).map((c, k) => c - pa[k]);
+    for (let k = 0; k < 3; k++) x[3 * i + k] = target[k] + R[k][0] * p[0] + R[k][1] * p[1] + R[k][2] * p[2];
+  }
+}
+
+/** Rigidly rotate (up to ~70°) and shift (up to ~1 Å) one molecule about its centroid. */
+function perturbFragment(x, atomsIdx, rand) {
+  const c = [0, 0, 0];
+  for (const i of atomsIdx) for (let k = 0; k < 3; k++) c[k] += x[3 * i + k] / atomsIdx.length;
+  const axis = [rand() - 0.5, rand() - 0.5, rand() - 0.5];
+  const al = Math.hypot(...axis) || 1;
+  const [ux, uy, uz] = axis.map((v) => v / al);
+  const t = (rand() - 0.5) * 2.4;
+  const cs = Math.cos(t), sn = Math.sin(t), C = 1 - cs;
+  const R = [
+    [cs + ux * ux * C, ux * uy * C - uz * sn, ux * uz * C + uy * sn],
+    [uy * ux * C + uz * sn, cs + uy * uy * C, uy * uz * C - ux * sn],
+    [uz * ux * C - uy * sn, uz * uy * C + ux * sn, cs + uz * uz * C],
+  ];
+  const shift = [rand() - 0.5, rand() - 0.5, rand() - 0.5].map((v) => v * 2);
+  for (const i of atomsIdx) {
+    const p = [x[3 * i] - c[0], x[3 * i + 1] - c[1], x[3 * i + 2] - c[2]];
+    for (let k = 0; k < 3; k++) x[3 * i + k] = c[k] + shift[k] + R[k][0] * p[0] + R[k][1] * p[1] + R[k][2] * p[2];
+  }
+}
+
 /** Heavy-atom distance-matrix difference, used to tell conformers apart. */
 function shapeDistance(x, y, heavy) {
   let sum = 0, count = 0;
@@ -326,7 +513,8 @@ function shapeDistance(x, y, heavy) {
 export function generateConformers(graph, { starts, maxConformers = 6, seed = 7 } = {}) {
   const T = buildTerms(graph);
   const n = T.n;
-  starts ??= n > 30 ? 8 : 14;
+  const fragments = countFragments(graph);
+  starts ??= fragments > 1 ? 6 : n > 30 ? 8 : 14;
   const rand = mulberry32(seed);
   const heavy = graph.atoms.map((a, i) => (a.symbol === 'H' ? -1 : i)).filter((i) => i >= 0);
   const found = [];
@@ -342,6 +530,38 @@ export function generateConformers(graph, { starts, maxConformers = 6, seed = 7 
   }
   found.sort((a, b) => a.energy - b.energy);
 
+  // Several molecules: dock them by their hydrogen bonds. For every donor H and
+  // acceptor on another molecule, turn the acceptor's lone pair toward the H at
+  // H-bond distance (in two orientations), then relax.
+  if (fragments > 1) {
+    const frags = fragmentLists(graph);
+    const fragOf = new Map(frags.flatMap((list, f) => list.map((i) => [i, f])));
+    const base = found[0].x;
+    const pairs = new Set(T.hbondTerms.filter((t) => fragOf.get(t.h) !== fragOf.get(t.a)).map((t) => `${t.d},${t.h},${t.a}`));
+    for (const key of pairs) {
+      const [d, h, a] = key.split(',').map(Number);
+      for (const spin of [0, Math.PI]) {
+        const y = base.slice();
+        dockAcceptor(y, graph, frags[fragOf.get(a)], d, h, a, spin);
+        const E = minimize(T, y, 2000, 2);
+        found.push({ x: y, energy: E });
+      }
+    }
+    found.sort((p, q) => p.energy - q.energy);
+
+    // Then refine the best few by basin hopping: rotate and shift one molecule at
+    // random, re-relax, and keep the result if the energy drops.
+    for (const f of found.slice(0, 3)) {
+      for (let hop = 0; hop < 25; hop++) {
+        const y = f.x.slice();
+        perturbFragment(y, frags[Math.floor(rand() * frags.length)], rand);
+        const E = minimize(T, y, 1500, 2);
+        if (E < f.energy - 1e-3) { f.x = y; f.energy = E; }
+      }
+    }
+    found.sort((a, b) => a.energy - b.energy);
+  }
+
   const unique = [];
   for (const f of found) {
     if (f.energy > found[0].energy + 20) break; // a start that got stuck, not a real conformer
@@ -353,8 +573,10 @@ export function generateConformers(graph, { starts, maxConformers = 6, seed = 7 
     unique.push(f);
     if (unique.length >= maxConformers) break;
   }
+  const hbOnly = { ...T, bondTerms: [], angleTerms: [], torsionTerms: [], planarTerms: [], chiralTerms: [], pairTerms: [] };
   return unique.map(({ x, energy }) => ({
     energy,
+    hbondEnergy: evaluate(hbOnly, x, new Float64Array(x.length), 2),
     coords: Array.from({ length: n }, (_, i) => [x[3 * i], x[3 * i + 1], x[3 * i + 2]]),
   }));
 }

@@ -407,6 +407,33 @@ const smilesCharge = (smiles) => smilesGraph(smiles).atoms.reduce((q, a) => q + 
 /** Whether the conformers for this SMILES still need computing (slow for big molecules). */
 export const needsConformers = (smiles) => !conformerCache.has(smiles);
 
+let worker = null;
+const waiting = new Map();
+
+/**
+ * Compute conformers in a Web Worker and cache them; resolves when done. Falls back
+ * to computing here if workers aren't available. Errors are left for build() to report.
+ */
+export function computeConformers(smiles) {
+  if (conformerCache.has(smiles)) return Promise.resolve();
+  if (waiting.has(smiles)) return waiting.get(smiles).promise;
+  try {
+    worker ??= new Worker(new URL('./conformer-worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = ({ data }) => {
+      if (data.conformers) conformerCache.set(data.smiles, data.conformers);
+      waiting.get(data.smiles)?.resolve();
+      waiting.delete(data.smiles);
+    };
+  } catch {
+    return Promise.resolve(); // build() will compute synchronously
+  }
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  waiting.set(smiles, { promise, resolve });
+  worker.postMessage({ smiles });
+  return promise;
+}
+
 function fromSmiles(smiles, known, conformer = 0) {
   const graph = smilesGraph(smiles);
   if (!conformerCache.has(smiles)) conformerCache.set(smiles, generateConformers(graph));
@@ -428,6 +455,7 @@ function fromSmiles(smiles, known, conformer = 0) {
     smiles,
     conformers: conformers.map((c) => c.energy - conformers[0].energy),
     conformer: pick,
+    hbondEnergy: conformers[pick].hbondEnergy,
     vsepr: null,
     shape: null,
     atoms,
@@ -554,6 +582,25 @@ function finish(mol) {
   }
   for (const bd of bonds) bd.length = len(sub(atoms[bd.b].pos, atoms[bd.a].pos));
   mol.electrons = atoms.reduce((s, a) => s + a.z, 0);
+
+  // Hydrogen bonds: H on N/O/F pointing (within 50° of straight) at a lone pair on
+  // another N/O/F no more than 2.5 Å away.
+  const polar = (s) => s === 'N' || s === 'O' || s === 'F';
+  mol.hbonds = [];
+  for (const [h, H] of atoms.entries()) {
+    if (H.symbol !== 'H' || H.neighbors.length !== 1 || !polar(atoms[H.neighbors[0]].symbol)) continue;
+    const d = H.neighbors[0];
+    for (const [a, A] of atoms.entries()) {
+      if (a === d || !polar(A.symbol) || !A.lp || (A.formalCharge ?? 0) > 0) continue;
+      if (A.symbol === 'N' && A.hybrid === 'sp²' && A.neighbors.length === 3) continue; // lone pair in the π system
+      const ha = sub(A.pos, H.pos), hd = sub(atoms[d].pos, H.pos);
+      const r = len(ha);
+      if (r > 2.5) continue;
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot(ha, hd) / (r * len(hd))))) / DEG;
+      if (angle < 130) continue;
+      mol.hbonds.push({ d, h, a, length: r, angle, da: len(sub(A.pos, atoms[d].pos)) });
+    }
+  }
   return mol;
 }
 

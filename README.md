@@ -59,6 +59,9 @@ E = Σ kb(r − r₀)²                bond stretching
   + Σ ki V²                      planarity at sp² atoms
   + Σ kc max(0, V₀ − sV)²        chirality (signed volume of the four neighbors)
   + Σ kr max(0, d₀ − d)²         steric repulsion
+  + Σ D₀[5(R₀/R)¹² − 6(R₀/R)¹⁰] cos⁴θ · S(R)
+                                 hydrogen bonds D–H···A (DREIDING form; R = D···A,
+                                 θ = D–H···A angle, S switches off between 3.1 and 3.6 Å)
 ```
 
 It is minimized with the FIRE algorithm from several random starts. Distinct
@@ -74,6 +77,13 @@ and fructose (ring and open chain). Sucrose (table sugar), caffeine, aspirin and
 others are in the library, and **Search** also accepts any SMILES string
 (e.g. `CCCCC` for pentane). In big molecules, click an atom to see its bond
 angles.
+
+**Hydrogen bonds.** Hydrogen bonds are drawn as dashed blue lines, with their
+lengths and angles listed. SMILES with `.` puts several molecules in one scene;
+they're docked by turning each acceptor's lone pair toward each donor H, relaxing,
+and refining by basin hopping. Examples: water dimer and trimer, acetic acid
+dimer, and the Watson–Crick G–C (three H-bonds) and A–T (two) base pairs. This
+runs in a Web Worker and takes a few seconds for base pairs.
 
 Link to a molecule with `#mol=H2O`, to an ion with `#mol=CO3&q=-2`, to a
 specific isomer and conformer with `#mol=C6H12O6&v=1&c=2`, or to any SMILES
@@ -109,7 +119,8 @@ with `#smiles=CCO`.
 - `js/molecule-data.js`: covalent radii, electronegativity, and measured molecule geometries
 - `js/molecule.js`: Lewis structures, VSEPR geometry, ionic compounds, Z-matrix conversion, SMILES molecules, and π and lone-pair orientation
 - `js/smiles.js`: SMILES parser (rings, branches, charges, implicit H, stereo)
-- `js/forcefield.js`: force field, FIRE minimizer, and conformer search
+- `js/forcefield.js`: force field (including H-bonds), FIRE minimizer, conformer search, and docking
+- `js/conformer-worker.js`: runs the conformer search off the main thread
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI
 - `js/main.js`: UI wiring and mode switching

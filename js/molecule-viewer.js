@@ -12,6 +12,7 @@ const BOHR = 0.529177; // Å
 const DENSITY_RES = 64;
 const ANGLE_COLOR = '#ffd75e';
 const LONE_PAIR_COLOR = '#b9a6ff';
+export const HBOND_COLOR = '#56d8ff';
 export const SIGMA_COLOR = '#45d6b0';
 export const H1S_COLOR = '#cfe3ff';
 const Y = new THREE.Vector3(0, 1, 0);
@@ -130,12 +131,12 @@ export class MoleculeViewer {
     this.controls.autoRotateSpeed = 1.0;
 
     this.groups = {};
-    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges']) {
+    for (const name of ['structure', 'skeleton', 'angles', 'lengths', 'lonePairs', 'orbitals', 'density', 'charges', 'hbonds']) {
       this.groups[name] = new THREE.Group();
       this.scene.add(this.groups[name]);
     }
     this.view = 'structure';
-    this.options = { angles: true, lengths: false, lonePairs: true };
+    this.options = { angles: true, lengths: false, lonePairs: true, hbonds: true };
     this.iso = 0.1;
     this.mc = null;
 
@@ -200,6 +201,7 @@ export class MoleculeViewer {
     this.#buildLengths();
     this.#buildLonePairs();
     this.#buildCharges();
+    this.#buildHbonds();
     this.#buildOrbitals();
     this.densityBuilt = false;
     this.#applyView();
@@ -388,6 +390,30 @@ export class MoleculeViewer {
     }
   }
 
+  // Hydrogen bonds: dashed lines from H to the acceptor, labeled with the distance.
+  #buildHbonds() {
+    const { atoms, hbonds } = this.mol;
+    const g = this.groups.hbonds;
+    const mat = new THREE.MeshBasicMaterial({ color: HBOND_COLOR, transparent: true, opacity: 0.9 });
+    for (const hb of hbonds ?? []) {
+      const p = v3(atoms[hb.h].pos), q = v3(atoms[hb.a].pos);
+      const n = 7;
+      for (let i = 0; i < n; i++) {
+        const s = p.clone().lerp(q, (i + 0.2) / n), e = p.clone().lerp(q, (i + 0.65) / n);
+        const seg = cylinder(s, e, 0.035, HBOND_COLOR);
+        seg.material.dispose();
+        seg.material = mat;
+        g.add(seg);
+      }
+      const label = textSprite(`${hb.length.toFixed(2)} Å`, { color: HBOND_COLOR, height: 0.16 * this.labelScale, weight: 600 });
+      const side = new THREE.Vector3().subVectors(q, p).cross(new THREE.Vector3(0, 0, 1));
+      if (side.lengthSq() < 1e-4) side.set(0, 1, 0);
+      label.position.copy(p).lerp(q, 0.5).addScaledVector(side.normalize(), 0.18 * this.labelScale);
+      label.userData.isLengthLabel = true;
+      g.add(label);
+    }
+  }
+
   // "+", "2−" labels above each ion.
   #buildCharges() {
     for (const a of this.mol.atoms) {
@@ -558,6 +584,8 @@ export class MoleculeViewer {
     G.orbitals.visible = v === 'orbitals';
     G.density.visible = v === 'density';
     G.angles.visible = this.options.angles;
+    G.hbonds.visible = this.options.hbonds;
+    for (const o of G.hbonds.children) if (o.userData.isLengthLabel) o.visible = this.options.lengths;
     G.lengths.visible = this.options.lengths;
   }
 

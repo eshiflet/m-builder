@@ -1,5 +1,6 @@
 // SMILES parser: atoms, bonds, ring closures, branches, charges, implicit
-// hydrogens, tetrahedral chirality (@/@@) and double-bond geometry (/ \).
+// hydrogens, tetrahedral chirality (@/@@), double-bond geometry (/ \), and
+// several molecules separated by “.”.
 
 const ORGANIC = new Set(['B', 'C', 'N', 'O', 'P', 'S', 'F', 'Cl', 'Br', 'I']);
 const AROMATIC = new Set(['b', 'c', 'n', 'o', 'p', 's']);
@@ -65,7 +66,10 @@ export function parseSmiles(str) {
       prev = stack.pop(); i++; continue;
     }
     if (ch in BOND_CHARS) { pending = ch; i++; continue; }
-    if (ch === '.') fail('Separate fragments (“.”) aren’t supported; enter one molecule');
+    if (ch === '.') { // a separate molecule in the same scene
+      if (stack.length) fail('“.” inside a branch');
+      prev = null; pending = null; i++; continue;
+    }
     if (/\d/.test(ch) || ch === '%') {
       if (prev == null) fail('Ring number before any atom');
       const label = ch === '%' ? str.slice(i + 1, i + 3) : ch;
@@ -121,7 +125,11 @@ export function parseSmiles(str) {
     if (a.hCount !== null || a.symbol === 'H') continue;
     let sum = 0;
     for (const bd of bonds) if (bd.a === idx || bd.b === idx) sum += bd.order === 1.5 ? 1 : bd.order;
-    if (a.aromatic && a.symbol !== 'O' && a.symbol !== 'S') sum += 1; // the atom's π electron
+    // An aromatic atom shares one double bond in the ring, except O/S and N/P with three
+    // connections (pyrrole-type), whose lone pair joins the ring instead.
+    const connections = a.nbrs.length;
+    const pyrroleLike = (a.symbol === 'N' || a.symbol === 'P') && connections >= 3;
+    if (a.aromatic && a.symbol !== 'O' && a.symbol !== 'S' && !pyrroleLike) sum += 1;
     const target = (DEFAULT_VALENCE[a.symbol] ?? [sum]).find((v) => v >= sum) ?? sum;
     for (let k = 0; k < target - sum; k++) addH(idx);
   }

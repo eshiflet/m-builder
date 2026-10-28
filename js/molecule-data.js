@@ -213,6 +213,13 @@ export const KNOWN_MOLECULES = [
   { smiles: 'CC(=O)NC1=CC=C(C=C1)O', name: 'Acetaminophen', aliases: ['paracetamol', 'tylenol'] },
   { smiles: 'CC(C)CC1=CC=C(C=C1)C(C)C(=O)O', name: 'Ibuprofen' },
   { smiles: 'NC1=C2N=CNC2=NC=N1', name: 'Adenine', aliases: ['dna base'] },
+
+  // Several molecules held together by hydrogen bonds (docked by the force field).
+  { smiles: 'O.O', name: 'Water dimer', aliases: ['hydrogen bond', 'h-bond', 'water pair'], note: 'Two water molecules: the H of one points at a lone pair on the other’s oxygen. This is the attraction that makes water a liquid at room temperature.' },
+  { smiles: 'O.O.O', name: 'Water trimer', note: 'Three waters form a ring, each donating one hydrogen bond and accepting one.' },
+  { smiles: 'CC(=O)O.CC(=O)O', name: 'Acetic acid dimer', note: 'Carboxylic acids pair up face to face through two hydrogen bonds, even in the vapor.' },
+  { smiles: 'Cn1cnc2c1nc(N)[nH]c2=O.Cn1ccc(N)nc1=O', name: 'G–C base pair', aliases: ['dna', 'base pair', 'guanine cytosine', 'gc pair'], note: 'Guanine and cytosine (with methyl groups standing in for the DNA backbone) pair through three hydrogen bonds, the Watson–Crick pattern that holds the two DNA strands together. G–C pairs, with three H-bonds, are stronger than A–T pairs, with two.' },
+  { smiles: 'Cn1cnc2c(N)ncnc12.Cc1cn(C)c(=O)[nH]c1=O', name: 'A–T base pair', aliases: ['adenine thymine', 'at pair'], note: 'Adenine and thymine (methyl groups stand in for the DNA backbone) pair through two hydrogen bonds in the Watson–Crick pattern.' },
 ];
 
 export const EXAMPLES = [
@@ -221,5 +228,6 @@ export const EXAMPLES = [
   { formula: 'NaCl', charge: 0 }, { formula: 'MgCl2', charge: 0 }, { formula: 'CaO', charge: 0 },
   { formula: 'NH4', charge: 1 }, { formula: 'NO3', charge: -1 }, { formula: 'CO3', charge: -2 }, { formula: 'SO4', charge: -2 },
   { name: 'β-D-Glucose', label: 'Glucose' }, { name: 'β-D-Fructose', label: 'Fructose' }, { name: 'Sucrose', label: 'Sucrose' },
+{ name: 'Water dimer', label: 'Water dimer' }, { name: 'G–C base pair', label: 'G–C pair' },
   { name: 'Butane', label: 'Butane' }, { name: 'Cyclohexane', label: 'Cyclohexane' }, { name: 'Caffeine', label: 'Caffeine' },
 ];
