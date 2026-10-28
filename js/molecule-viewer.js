@@ -139,6 +139,22 @@ export class MoleculeViewer {
     this.iso = 0.1;
     this.mc = null;
 
+    this.selected = null;
+    this.onSelectAtom = null;
+    this.raycaster = new THREE.Raycaster();
+    let down = null;
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+    canvas.addEventListener('pointerup', (e) => {
+      if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      this.raycaster.setFromCamera(ndc, this.camera);
+      const balls = [...this.groups.structure.children, ...this.groups.skeleton.children].filter((o) => o.userData.atom != null && o.parent.visible);
+      const hit = this.raycaster.intersectObjects(balls)[0];
+      this.selectAtom(hit ? hit.object.userData.atom : null);
+    });
+
     new ResizeObserver(() => this.#resize()).observe(container);
     this.#resize();
   }
@@ -169,11 +185,15 @@ export class MoleculeViewer {
 
   setMolecule(mol) {
     this.mol = mol;
+    this.selected = null;
     for (const [name, g] of Object.entries(this.groups)) {
       if (name === 'density' && this.mc) { g.remove(this.mc); }
       this.#clear(g);
     }
     if (!mol) return;
+    // Labels are sized in Å; enlarge them for big molecules so they stay readable when zoomed out.
+    const extent = Math.max(...mol.atoms.map((a) => Math.hypot(...a.pos)));
+    this.labelScale = Math.max(1, extent / 2.5);
     this.#buildStructure();
     this.#buildSkeleton();
     this.#buildAngles();
@@ -195,6 +215,7 @@ export class MoleculeViewer {
         new THREE.MeshStandardMaterial({ color: atomColor(a.symbol), roughness: 0.35, metalness: 0.05 }),
       );
       ball.position.copy(v3(a.pos));
+      ball.userData.atom = atoms.indexOf(a);
       g.add(ball);
     }
     for (const bd of bonds) {
@@ -248,6 +269,7 @@ export class MoleculeViewer {
         new THREE.MeshStandardMaterial({ color: atomColor(a.symbol), roughness: 0.3 }),
       );
       ball.position.copy(v3(a.pos));
+      ball.userData.atom = atoms.indexOf(a);
       g.add(ball);
     }
     const pts = bonds.flatMap((bd) => [v3(atoms[bd.a].pos), v3(atoms[bd.b].pos)]);
@@ -257,8 +279,29 @@ export class MoleculeViewer {
     ));
   }
 
+  /** Large molecules show angles only at the selected atom, to avoid a thicket of arcs. */
+  get showsAllAngles() { return this.mol && this.mol.atoms.length <= 10; }
+
+  selectAtom(i) {
+    this.selected = i;
+    this.#clear(this.groups.angles);
+    this.#buildAngles();
+    this.#applyView();
+    this.onSelectAtom?.(i);
+  }
+
   #buildAngles() {
-    const { atoms, angles } = this.mol;
+    const { atoms } = this.mol;
+    const angles = this.showsAllAngles ? this.mol.angles : this.mol.angles.filter((a) => a.vertex === this.selected);
+    if (this.selected != null) {
+      const ring = new THREE.Mesh(
+        new THREE.SphereGeometry(ballRadius(atoms[this.selected]) * 1.35, 24, 16),
+        new THREE.MeshBasicMaterial({ color: ANGLE_COLOR, wireframe: true, transparent: true, opacity: 0.6, depthTest: false }),
+      );
+      ring.position.copy(v3(atoms[this.selected].pos));
+      ring.renderOrder = 8;
+      this.groups.angles.add(ring);
+    }
     const g = this.groups.angles;
     const lineMat = new THREE.LineBasicMaterial({ color: ANGLE_COLOR, depthTest: false, transparent: true });
     const placed = [];
@@ -295,9 +338,9 @@ export class MoleculeViewer {
         new THREE.BufferGeometry().setFromPoints(fan),
         new THREE.MeshBasicMaterial({ color: ANGLE_COLOR, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, depthTest: false }),
       );
-      const label = textSprite(`${ang.value.toFixed(1)}°`, { color: ANGLE_COLOR, height: 0.2 });
+      const label = textSprite(`${ang.value.toFixed(1)}°`, { color: ANGLE_COLOR, height: 0.2 * this.labelScale });
       const mid = u.clone().applyAxisAngle(k, theta / 2);
-      let lr = ra + 0.3;
+      let lr = ra + 0.3 * this.labelScale;
       label.position.copy(V).addScaledVector(mid, lr);
       for (let tries = 0; tries < 6 && placed.some((p) => p.distanceTo(label.position) < 0.4); tries++) {
         lr += 0.28;
@@ -313,7 +356,7 @@ export class MoleculeViewer {
     const { atoms, bonds } = this.mol;
     for (const bd of bonds) {
       const p = v3(atoms[bd.a].pos), q = v3(atoms[bd.b].pos);
-      const label = textSprite(`${bd.length.toFixed(3)} Å`, { color: '#c9d3e6', height: 0.15, weight: 500 });
+      const label = textSprite(`${bd.length.toFixed(3)} Å`, { color: '#c9d3e6', height: 0.15 * this.labelScale, weight: 500 });
       const axis = q.clone().sub(p).normalize();
       const side = new THREE.Vector3(0, 0, 1).cross(axis);
       if (side.lengthSq() < 1e-4) side.set(0, 1, 0);
@@ -431,9 +474,14 @@ export class MoleculeViewer {
   // Promolecule density: the sum of each atom's own (spherical) electron density.
   #buildDensity() {
     const { atoms } = this.mol;
+    const tableCache = new Map();
     const tables = atoms.map((a) => {
-      const config = electronConfig(a.z - (a.charge ?? 0)); // ions: add or remove valence electrons
-      return atomDensityTable(config.map((s) => ({ ...s, zeff: slaterZeff(a.z, config, s.n, s.l) })));
+      const key = `${a.z},${a.charge ?? 0}`;
+      if (!tableCache.has(key)) {
+        const config = electronConfig(a.z - (a.charge ?? 0)); // ions: add or remove valence electrons
+        tableCache.set(key, atomDensityTable(config.map((s) => ({ ...s, zeff: slaterZeff(a.z, config, s.n, s.l) }))));
+      }
+      return tableCache.get(key);
     });
     const colors = atoms.map((a) => new THREE.Color(atomColor(a.symbol)));
     const half = Math.max(...atoms.map((a) => Math.max(...a.pos.map(Math.abs)))) + 2.6;
@@ -445,29 +493,32 @@ export class MoleculeViewer {
     }
     const mc = this.mc;
     mc.reset();
-    const res = DENSITY_RES, h = res / 2;
-    let i = 0;
-    for (let zi = 0; zi < res; zi++) {
-      const z = ((zi - h) / h) * half;
-      for (let yi = 0; yi < res; yi++) {
-        const y = ((yi - h) / h) * half;
-        for (let xi = 0; xi < res; xi++, i++) {
-          const x = ((xi - h) / h) * half;
-          let total = 0, best = 0, bestAtom = 0;
-          for (let a = 0; a < atoms.length; a++) {
-            const p = atoms[a].pos;
-            const r = Math.hypot(x - p[0], y - p[1], z - p[2]) / BOHR;
-            const t = tables[a];
-            const idx = r / t.dr;
-            const v = idx >= t.table.length - 1 ? 0 : t.table[Math.floor(idx)];
-            total += v;
-            if (v > best) { best = v; bestAtom = a; }
+    const res = DENSITY_RES, h = res / 2, step = half / h;
+    const best = new Float32Array(res * res * res);
+    const CUTOFF = 4.5; // Å; atomic densities are negligible beyond this
+    // Add each atom's density only over the grid cells near it.
+    atoms.forEach((atom, a) => {
+      const [px, py, pz] = atom.pos;
+      const t = tables[a];
+      const lo = (c) => Math.max(0, Math.floor((c - CUTOFF) / step + h));
+      const hi = (c) => Math.min(res - 1, Math.ceil((c + CUTOFF) / step + h));
+      for (let zi = lo(pz); zi <= hi(pz); zi++) {
+        const z = (zi - h) * step;
+        for (let yi = lo(py); yi <= hi(py); yi++) {
+          const y = (yi - h) * step;
+          const row = (zi * res + yi) * res;
+          for (let xi = lo(px); xi <= hi(px); xi++) {
+            const x = (xi - h) * step;
+            const idx = Math.hypot(x - px, y - py, z - pz) / BOHR / t.dr;
+            if (idx >= t.table.length - 1) continue;
+            const v = t.table[Math.floor(idx)];
+            const i = row + xi;
+            mc.field[i] += v;
+            if (v > best[i]) { best[i] = v; colors[a].toArray(mc.palette, i * 3); }
           }
-          mc.field[i] = total;
-          colors[bestAtom].toArray(mc.palette, i * 3);
         }
       }
-    }
+    });
     mc.scale.setScalar(half);
     mc.isolation = this.iso;
     mc.update();

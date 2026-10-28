@@ -45,7 +45,39 @@ view shows a single unit.
 NO₃⁻, CO₃²⁻ and SO₄²⁻. If a formula only works as an ion (for example C + 3 O),
 the panel offers the charge that does.
 
-Link to a molecule with `#mol=H2O`, or to an ion with `#mol=CO3&q=-2`.
+**Bigger molecules, isomers and conformers.** A formula alone doesn't say how
+atoms connect: glucose and fructose are both C₆H₁₂O₆. These molecules are
+described by **SMILES**, a text notation for the bonding pattern, including 3D
+handedness (`@`/`@@`) and cis/trans (`/` `\`). `js/smiles.js` parses it, and
+`js/forcefield.js` turns it into 3D by minimizing a small molecular-mechanics
+energy:
+
+```
+E = Σ kb(r − r₀)²                bond stretching
+  + Σ ka(cos θ − cos θ₀)²        angle bending (109.5°/120°/180° by hybridization)
+  + Σ V/2 (1 ± cos nφ)           torsions (staggered sp³, anti over gauche, flat sp²)
+  + Σ ki V²                      planarity at sp² atoms
+  + Σ kc max(0, V₀ − sV)²        chirality (signed volume of the four neighbors)
+  + Σ kr max(0, d₀ − d)²         steric repulsion
+```
+
+It is minimized with the FIRE algorithm from several random starts. Distinct
+minima are the molecule's **conformers** (shapes it flexes between), shown
+under **Shapes** with their relative energies. Checks: cyclohexane gives a chair,
+with the twist-boat 5.6 kcal/mol higher; butane's gauche form is +0.9 kcal/mol
+above anti; and β-glucose comes out as a chair with every OH equatorial.
+Force-field geometries are approximate, typically within a few degrees.
+
+When several library molecules share a formula, they appear under
+**Isomers**, e.g. C₆H₁₂O₆: β- and α-glucose, open-chain glucose, galactose,
+and fructose (ring and open chain). Sucrose (table sugar), caffeine, aspirin and
+others are in the library, and **Search** also accepts any SMILES string
+(e.g. `CCCCC` for pentane). In big molecules, click an atom to see its bond
+angles.
+
+Link to a molecule with `#mol=H2O`, to an ion with `#mol=CO3&q=-2`, to a
+specific isomer and conformer with `#mol=C6H12O6&v=1&c=2`, or to any SMILES
+with `#smiles=CCO`.
 
 ## What you're looking at
 
@@ -75,7 +107,9 @@ Link to a molecule with `#mol=H2O`, or to an ion with `#mol=CO3&q=-2`.
 - `js/orbitals.js`: wavefunction math, sampling, and isosurface fields
 - `js/viewer.js`: three.js scene
 - `js/molecule-data.js`: covalent radii, electronegativity, and measured molecule geometries
-- `js/molecule.js`: Lewis structures, VSEPR geometry, Z-matrix conversion, and π and lone-pair orientation
+- `js/molecule.js`: Lewis structures, VSEPR geometry, ionic compounds, Z-matrix conversion, SMILES molecules, and π and lone-pair orientation
+- `js/smiles.js`: SMILES parser (rings, branches, charges, implicit H, stereo)
+- `js/forcefield.js`: force field, FIRE minimizer, and conformer search
 - `js/molecule-viewer.js`: three.js molecule scene (structure, orbitals, density)
 - `js/molecule-ui.js`: molecule builder UI
 - `js/main.js`: UI wiring and mode switching

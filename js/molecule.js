@@ -3,6 +3,8 @@
 
 import { ELEMENTS } from './elements.js';
 import { COVALENT_RADIUS, ELECTRONEGATIVITY, IONIC_RADIUS, KNOWN_MOLECULES } from './molecule-data.js';
+import { parseSmiles, SmilesError } from './smiles.js';
+import { generateConformers, ForceFieldError } from './forcefield.js';
 
 const BY_SYMBOL = new Map(ELEMENTS.map((e) => [e.symbol, e]));
 const DEG = Math.PI / 180;
@@ -176,7 +178,7 @@ function fromVSEPR(counts, known, charge = 0) {
   const ligSyms = [...symbols];
   ligSyms.splice(ligSyms.indexOf(center), 1);
   if (ligSyms.length > 6) {
-    throw new BuildError('Too many atoms to fit around a single central atom. Molecules with several central atoms are built only for ones in the reference list (try C₂H₆, C₂H₄, C₆H₆, CH₃OH…).');
+    throw new BuildError('A formula alone doesn’t say how these atoms connect, and there’s no molecule with this formula in the library. Type a name or a SMILES string (which spells out the connections) in the search box, e.g. CCCCC for pentane.');
   }
 
   const valence = symbols.reduce((sum, s) => sum + valenceElectrons(s), 0) - charge;
@@ -384,6 +386,55 @@ function fromExplicit(known) {
   };
 }
 
+// ---------- SMILES + force field ----------
+
+const graphCache = new Map();
+const conformerCache = new Map();
+
+function smilesGraph(smiles) {
+  if (!graphCache.has(smiles)) graphCache.set(smiles, parseSmiles(smiles));
+  return graphCache.get(smiles);
+}
+
+export function smilesCounts(smiles) {
+  const counts = new Map();
+  for (const a of smilesGraph(smiles).atoms) counts.set(a.symbol, (counts.get(a.symbol) || 0) + 1);
+  return counts;
+}
+
+const smilesCharge = (smiles) => smilesGraph(smiles).atoms.reduce((q, a) => q + a.charge, 0);
+
+/** Whether the conformers for this SMILES still need computing (slow for big molecules). */
+export const needsConformers = (smiles) => !conformerCache.has(smiles);
+
+function fromSmiles(smiles, known, conformer = 0) {
+  const graph = smilesGraph(smiles);
+  if (!conformerCache.has(smiles)) conformerCache.set(smiles, generateConformers(graph));
+  const conformers = conformerCache.get(smiles);
+  const pick = Math.min(Math.max(conformer, 0), conformers.length - 1);
+  const coords = conformers[pick].coords;
+  const atoms = graph.atoms.map((a, i) => {
+    const orderSum = graph.bonds.filter((b) => b.a === i || b.b === i).reduce((s, b) => s + b.order, 0);
+    const valence = valenceElectrons(a.symbol) ?? 4;
+    const lp = Math.max(0, Math.round((valence - a.charge - orderSum) / 2));
+    return { symbol: a.symbol, pos: coords[i], lp, single: 0, lpDirs: null, formalCharge: a.charge };
+  });
+  const counts = smilesCounts(smiles);
+  return {
+    name: known?.name ?? null,
+    note: known?.note ?? null,
+    formula: hillKey(counts),
+    source: 'forcefield',
+    smiles,
+    conformers: conformers.map((c) => c.energy - conformers[0].energy),
+    conformer: pick,
+    vsepr: null,
+    shape: null,
+    atoms,
+    bonds: graph.bonds.map(({ a, b, order }) => ({ a, b, order })),
+  };
+}
+
 // ---------- orbitals, lone pairs, angles ----------
 
 const HYBRID = { 1: 's', 2: 'sp', 3: 'sp²', 4: 'sp³', 5: 'sp³d', 6: 'sp³d²' };
@@ -506,18 +557,62 @@ function finish(mol) {
   return mol;
 }
 
-function build(counts, charge) {
-  const key = hillKey(counts);
-  const known = KNOWN_MOLECULES.find((m) => hillKey(parseFormula(m.formula)) === key && (m.charge ?? 0) === charge);
-  let mol;
-  if (charge !== 0 && isIonicCombo(counts)) {
-    throw new BuildError('This combination forms a neutral ionic compound; the charges of its ions already cancel. Set the charge back to 0.');
+const entryKeys = new Map();
+function entryKey(m) {
+  if (!entryKeys.has(m)) {
+    entryKeys.set(m, m.smiles
+      ? { key: hillKey(smilesCounts(m.smiles)), charge: smilesCharge(m.smiles) }
+      : { key: hillKey(parseFormula(m.formula)), charge: m.charge ?? 0 });
   }
-  if (known?.zmatrix || known?.coords) mol = fromExplicit(known);
-  else if (charge === 0 && isIonicCombo(counts)) mol = fromIonic(counts, known);
-  else mol = fromVSEPR(counts, known, charge);
+  return entryKeys.get(m);
+}
+
+/** Every reference entry with this formula and charge (isomers), in library order. */
+export function isomersOf(counts, charge = 0) {
+  const key = hillKey(counts);
+  return KNOWN_MOLECULES.filter((m) => {
+    const k = entryKey(m);
+    return k.key === key && k.charge === charge;
+  });
+}
+
+/** Library entries whose name or aliases match the query (exact matches first). */
+export function searchLibrary(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const names = (m) => [m.name, ...(m.aliases ?? [])].filter(Boolean).map((n) => n.toLowerCase());
+  const exact = KNOWN_MOLECULES.filter((m) => names(m).includes(q));
+  const partial = KNOWN_MOLECULES.filter((m) => !exact.includes(m) && names(m).some((n) => n.includes(q)));
+  return [...exact, ...partial];
+}
+
+export const entryCounts = (m) => (m.smiles ? smilesCounts(m.smiles) : parseFormula(m.formula));
+export const entryCharge = (m) => entryKey(m).charge;
+
+function build(counts, charge, { variant = 0, conformer = 0, smiles = null } = {}) {
+  let mol;
+  if (smiles) {
+    const match = KNOWN_MOLECULES.find((m) => m.smiles === smiles);
+    mol = fromSmiles(smiles, match, conformer);
+    charge = smilesCharge(smiles);
+  } else {
+    if (charge !== 0 && isIonicCombo(counts)) {
+      throw new BuildError('This combination forms a neutral ionic compound; the charges of its ions already cancel. Set the charge back to 0.');
+    }
+    const matches = isomersOf(counts, charge);
+    const known = matches[Math.min(variant, matches.length - 1)];
+    if (known?.smiles) mol = fromSmiles(known.smiles, known, conformer);
+    else if (known?.zmatrix || known?.coords) mol = fromExplicit(known);
+    else if (charge === 0 && isIonicCombo(counts)) mol = fromIonic(counts, known);
+    else mol = fromVSEPR(counts, known, charge);
+    if (matches.length > 1) {
+      mol.isomers = matches.map((m) => m.name);
+      mol.variant = matches.indexOf(known);
+    }
+    mol.note ??= known?.note ?? null;
+    mol.crystal = !!known?.crystal;
+  }
   mol.charge = charge;
-  mol.crystal = !!known?.crystal;
   finish(mol);
   mol.electrons -= charge;
   return mol;
@@ -525,14 +620,16 @@ function build(counts, charge) {
 
 /**
  * Build a molecule or ion from element counts and an overall charge.
+ * options: { variant: which isomer, conformer, smiles: build this SMILES instead }.
  * Returns a molecule, { error, formula, suggestCharge? }, or null if empty.
  */
-export function buildMolecule(counts, charge = 0) {
+export function buildMolecule(counts, charge = 0, options = {}) {
   const total = [...counts.values()].reduce((s, n) => s + n, 0);
-  if (!total) return null;
+  if (!total && !options.smiles) return null;
   try {
-    return build(counts, charge);
+    return build(counts, charge, options);
   } catch (e) {
+    if (e instanceof SmilesError || e instanceof ForceFieldError) return { error: e.message, formula: options.smiles ?? hillKey(counts), charge };
     if (!(e instanceof BuildError)) throw e;
     const result = { error: e.message, formula: hillKey(counts), charge };
     // Many failures are ions entered without their charge (NH₄, CO₃): suggest one that works.

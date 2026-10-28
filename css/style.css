@@ -358,6 +358,22 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .examples .chip { padding: 2px 9px; }
 .examples .chip.on { border-color: var(--accent); color: var(--accent); }
 
+#search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+#search-input:focus { outline: none; border-color: var(--accent); }
+.search-msg { flex-basis: 100%; color: #ffb4a8; font-size: 12px; }
+.search-msg:empty { display: none; }
+#variants { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+.note code { font-size: 11px; overflow-wrap: anywhere; color: var(--text); }
 .stage-empty {
   position: absolute;
   inset: 0;

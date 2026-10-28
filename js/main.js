@@ -282,9 +282,9 @@ renderColorLegend('phase');
 const hash = decodeURIComponent(location.hash.slice(1));
 const fromHash = ELEMENTS.find((el) => el.symbol.toLowerCase() === hash.toLowerCase());
 selectElement(fromHash ? fromHash.z : 6);
-if (hash.startsWith('mol')) {
+if (hash.startsWith('mol') || hash.startsWith('smiles=')) {
   setMode('molecules');
-  molecules.loadFormula(hash.split('=')[1] || '');
+  molecules.loadHash(hash);
 } else {
   molecules.setActive(false);
 }

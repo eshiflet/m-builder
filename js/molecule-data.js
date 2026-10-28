@@ -175,6 +175,44 @@ export const KNOWN_MOLECULES = [
     }),
     bonds: [0, 1, 2, 3, 4, 5].flatMap((i) => [[2 * i, (2 * i + 2) % 12, 1.5], [2 * i, 2 * i + 1, 1]]),
   },
+
+  // Built from SMILES (connectivity + stereochemistry) and a force field.
+  // Sugars: same formula, different structures.
+  { smiles: 'C([C@@H]1[C@H]([C@@H]([C@H]([C@@H](O1)O)O)O)O)O', name: 'β-D-Glucose', aliases: ['glucose', 'dextrose', 'blood sugar'], note: 'Six-membered ring (pyranose) in a chair; every OH is equatorial, which is part of why glucose is so stable and common.' },
+  { smiles: 'C([C@@H]1[C@H]([C@@H]([C@H]([C@H](O1)O)O)O)O)O', name: 'α-D-Glucose', note: 'Same ring as β-glucose, but the OH on carbon 1 points axially (down). In water the two forms interconvert through the open chain.' },
+  { smiles: 'C([C@H]([C@H]([C@@H]([C@H](C=O)O)O)O)O)O', name: 'D-Glucose (open chain)', note: 'The straight-chain aldehyde form. Less than 1% of glucose in water is in this form at any moment; it closes into the rings.' },
+  { smiles: 'C([C@@H]1[C@@H]([C@@H]([C@H]([C@@H](O1)O)O)O)O)O', name: 'β-D-Galactose', aliases: ['galactose'], note: 'Differs from glucose only at carbon 4, where the OH is axial instead of equatorial.' },
+  { smiles: 'C([C@@H]1[C@H]([C@@H]([C@](O1)(CO)O)O)O)O', name: 'β-D-Fructose', aliases: ['fructose', 'fruit sugar'], note: 'Fructose is a ketone sugar: the ring closes at carbon 2, giving a five-membered (furanose) ring. This is the form found in sucrose.' },
+  { smiles: 'C([C@H]([C@H]([C@@H](C(=O)CO)O)O)O)O', name: 'D-Fructose (open chain)', note: 'The straight-chain ketone form of fructose; the C=O is on carbon 2 rather than carbon 1 as in glucose.' },
+  { smiles: 'C([C@@H]1[C@H]([C@@H]([C@H]([C@H](O1)O[C@]2([C@H]([C@@H]([C@H](O2)CO)O)O)CO)O)O)O)O', name: 'Sucrose', aliases: ['table sugar', 'sugar', 'cane sugar'], note: 'Table sugar: an α-glucose ring joined to a β-fructose ring through one oxygen (a glycosidic bond), with water removed. C₆H₁₂O₆ + C₆H₁₂O₆ − H₂O = C₁₂H₂₂O₁₁.' },
+
+  // Other organic molecules (several are isomers of each other).
+  { smiles: 'COC', name: 'Dimethyl ether', note: 'An isomer of ethanol: same atoms, but the oxygen sits between the carbons.' },
+  { smiles: 'CCC', name: 'Propane' },
+  { smiles: 'CCCC', name: 'Butane', note: 'Rotating around the middle bond gives anti and gauche conformers.' },
+  { smiles: 'CC(C)C', name: 'Isobutane', note: 'A branched isomer of butane.' },
+  { smiles: 'C=CCC', name: '1-Butene' },
+  { smiles: 'C/C=C/C', name: 'trans-2-Butene', note: 'The methyl groups are on opposite sides of the rigid C=C bond.' },
+  { smiles: 'C/C=C\\C', name: 'cis-2-Butene', note: 'The methyl groups are on the same side of the C=C bond. It can’t rotate into the trans form without breaking the π bond.' },
+  { smiles: 'C1CCCCC1', name: 'Cyclohexane', note: 'The chair conformer has every C–C–C–C angle staggered; the twist-boat is about 5 kcal/mol higher.' },
+  { smiles: 'CC(=O)C', name: 'Acetone' },
+  { smiles: 'CCC=O', name: 'Propanal', note: 'An isomer of acetone, with the C=O at the end of the chain (an aldehyde).' },
+  { smiles: 'CC(=O)O', name: 'Acetic acid', aliases: ['vinegar'] },
+  { smiles: 'COC=O', name: 'Methyl formate', note: 'An isomer of acetic acid (an ester).' },
+  { smiles: 'OCCO', name: 'Ethylene glycol', aliases: ['antifreeze'] },
+  { smiles: 'OCC(O)CO', name: 'Glycerol' },
+  { smiles: 'NC(=O)N', name: 'Urea' },
+  { smiles: 'NCC(=O)O', name: 'Glycine', aliases: ['amino acid'] },
+  { smiles: 'C[C@@H](C(=O)O)N', name: 'L-Alanine' },
+  { smiles: 'Cc1ccccc1', name: 'Toluene' },
+  { smiles: 'Oc1ccccc1', name: 'Phenol' },
+  { smiles: 'c1ccncc1', name: 'Pyridine' },
+  { smiles: 'c1ccc2ccccc2c1', name: 'Naphthalene', aliases: ['mothballs'] },
+  { smiles: 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C', name: 'Caffeine', aliases: ['coffee'] },
+  { smiles: 'CC(=O)OC1=CC=CC=C1C(=O)O', name: 'Aspirin' },
+  { smiles: 'CC(=O)NC1=CC=C(C=C1)O', name: 'Acetaminophen', aliases: ['paracetamol', 'tylenol'] },
+  { smiles: 'CC(C)CC1=CC=C(C=C1)C(C)C(=O)O', name: 'Ibuprofen' },
+  { smiles: 'NC1=C2N=CNC2=NC=N1', name: 'Adenine', aliases: ['dna base'] },
 ];
 
 export const EXAMPLES = [
@@ -182,4 +220,6 @@ export const EXAMPLES = [
     .map((formula) => ({ formula, charge: 0 })),
   { formula: 'NaCl', charge: 0 }, { formula: 'MgCl2', charge: 0 }, { formula: 'CaO', charge: 0 },
   { formula: 'NH4', charge: 1 }, { formula: 'NO3', charge: -1 }, { formula: 'CO3', charge: -2 }, { formula: 'SO4', charge: -2 },
+  { name: 'β-D-Glucose', label: 'Glucose' }, { name: 'β-D-Fructose', label: 'Fructose' }, { name: 'Sucrose', label: 'Sucrose' },
+  { name: 'Butane', label: 'Butane' }, { name: 'Cyclohexane', label: 'Cyclohexane' }, { name: 'Caffeine', label: 'Caffeine' },
 ];

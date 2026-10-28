@@ -1,6 +1,10 @@
 import { ELEMENTS } from './elements.js';
 import { EXAMPLES } from './molecule-data.js';
-import { buildMolecule, parseFormula, hillKey, formulaHTML, chargeText } from './molecule.js';
+import {
+  buildMolecule, parseFormula, hillKey, formulaHTML, chargeText,
+  isomersOf, searchLibrary, entryCounts, entryCharge, smilesCounts, needsConformers,
+} from './molecule.js';
+import { KNOWN_MOLECULES } from './molecule-data.js';
 import { configHTML } from './electron-config.js';
 import { MoleculeViewer, atomColor, SIGMA_COLOR, H1S_COLOR, TRANSFER_COLOR } from './molecule-viewer.js';
 import { PHASE_COLORS } from './viewer.js';
@@ -27,30 +31,66 @@ export function createMoleculeUI({ onTrayChange }) {
   const viewer = new MoleculeViewer($('#mol-canvas'));
   const tray = new Map();
   let charge = 0;
+  let variant = 0; // which isomer, when several share the formula
+  let conformer = 0;
+  let customSmiles = null; // a typed SMILES that isn't in the library
   let view = 'structure';
   let mol = null;
 
   $('#examples').innerHTML = EXAMPLES
-    .map(({ formula, charge: q }) => `<button class="chip" data-formula="${formula}" data-charge="${q}">${formulaHTML(formula, q)}</button>`)
+    .map(({ formula, charge: q = 0, name, label }) => (name
+      ? `<button class="chip" data-name="${name}">${label}</button>`
+      : `<button class="chip" data-formula="${formula}" data-charge="${q}">${formulaHTML(formula, q)}</button>`))
     .join('');
+  $('#library').innerHTML = KNOWN_MOLECULES.filter((m) => m.name)
+    .map((m) => `<option value="${m.name}"></option>`).join('');
 
-  function setTray(counts, q = 0) {
+  function setTray(counts, q = 0, opts = {}) {
     tray.clear();
     for (const [s, n] of counts) if (n > 0) tray.set(s, n);
     charge = q;
+    variant = opts.variant ?? 0;
+    conformer = opts.conformer ?? 0;
+    customSmiles = opts.smiles ?? null;
     update();
   }
 
+  /** Load a library entry: its atoms, and which isomer it is among same-formula entries. */
+  function loadEntry(entry, opts = {}) {
+    const counts = entryCounts(entry);
+    const q = entryCharge(entry);
+    setTray(counts, q, { variant: Math.max(0, isomersOf(counts, q).indexOf(entry)), ...opts });
+  }
+
+  // Building conformers takes up to ~1.5 s for big molecules: show a message first.
+  let pending = 0;
   function update() {
+    const target = customSmiles ?? isomersOf(tray, charge)[variant]?.smiles;
+    if (target && needsConformers(target)) {
+      viewer.setMolecule(null);
+      $('#mol-empty').innerHTML = '<div>Building 3D structure…<br><span class="muted">relaxing the geometry with a force field</span></div>';
+      const ticket = ++pending;
+      setTimeout(() => { if (ticket === pending) render(); }, 40);
+      return;
+    }
+    render();
+  }
+
+  function render() {
     renderTray();
     onTrayChange?.(tray);
-    mol = buildMolecule(tray, charge);
+    mol = buildMolecule(tray, charge, { variant, conformer, smiles: customSmiles });
     const key = hillKey(tray);
     $('#charge-value').textContent = charge ? chargeText(charge) : '0';
     document.querySelectorAll('#examples .chip').forEach((c) => {
-      c.classList.toggle('on', hillKey(parseFormula(c.dataset.formula)) === key && +c.dataset.charge === charge && tray.size > 0);
+      const on = c.dataset.name
+        ? mol?.name === c.dataset.name
+        : !customSmiles && hillKey(parseFormula(c.dataset.formula)) === key && +c.dataset.charge === charge && tray.size > 0;
+      c.classList.toggle('on', !!on);
     });
+    renderVariants();
     const q = charge ? `&q=${charge}` : '';
+    const extra = `${variant ? `&v=${variant}` : ''}${conformer ? `&c=${conformer}` : ''}`;
 
     const empty = $('#mol-empty');
     if (!mol) {
@@ -61,7 +101,9 @@ export function createMoleculeUI({ onTrayChange }) {
       history.replaceState(null, '', '#mol');
       return;
     }
-    history.replaceState(null, '', `#mol=${mol.error ? key : mol.formula}${q}`);
+    history.replaceState(null, '', customSmiles
+      ? `#smiles=${encodeURIComponent(customSmiles)}${conformer ? `&c=${conformer}` : ''}`
+      : `#mol=${mol.error ? key : mol.formula}${q}${extra}`);
     if (mol.error) {
       viewer.setMolecule(null);
       empty.innerHTML = `<div class="error">${mol.error}</div>`;
@@ -76,6 +118,20 @@ export function createMoleculeUI({ onTrayChange }) {
     viewer.setMolecule(mol);
     renderTitle();
     renderInfo();
+  }
+
+  function renderVariants() {
+    const rows = [];
+    if (mol?.isomers) {
+      rows.push(`<div class="builder-row"><span class="control-label" title="Same atoms, connected differently">Isomers</span><div class="examples">${
+        mol.isomers.map((n, i) => `<button class="chip${i === variant ? ' on' : ''}" data-variant="${i}">${n}</button>`).join('')}</div></div>`);
+    }
+    if (mol?.conformers?.length > 1) {
+      rows.push(`<div class="builder-row"><span class="control-label" title="Same molecule, rotated around single bonds or with a flexed ring">Shapes</span><div class="examples">${
+        mol.conformers.map((e, i) => `<button class="chip${i === mol.conformer ? ' on' : ''}" data-conformer="${i}" title="Energy relative to the lowest shape">${i ? `+${e.toFixed(1)}` : 'lowest'}${i ? ' <span class="muted">kcal/mol</span>' : ''}</button>`).join('')}</div></div>`);
+    }
+    $('#variants').innerHTML = rows.join('');
+    $('#variants').hidden = !rows.length;
   }
 
   function renderTray() {
@@ -130,7 +186,7 @@ export function createMoleculeUI({ onTrayChange }) {
 
   function explainAngle() {
     if (mol.ionic) return explainIonic();
-    if (mol.source === 'experimental' && !mol.vsepr) return '';
+    if (!mol.vsepr) return ''; // only single-center VSEPR shapes get this explanation
     const c = mol.atoms[0];
     const E = c.lp + c.single;
     const ideal = IDEAL_ANGLE[c.steric];
@@ -151,7 +207,9 @@ export function createMoleculeUI({ onTrayChange }) {
   }
 
   function renderInfo() {
-    const { atoms, bonds, angles } = mol;
+    const { atoms, bonds } = mol;
+    const allAngles = viewer.showsAllAngles;
+    const angles = allAngles ? mol.angles : mol.angles.filter((a) => a.vertex === viewer.selected);
     const angleRows = [...new Map(angles.map((a) => {
       const label = `${atoms[a.a].symbol}–${atoms[a.vertex].symbol}–${atoms[a.b].symbol}`;
       return [`${label}${a.value.toFixed(1)}`, `<li>${label} <span class="angle">${a.value.toFixed(1)}°</span></li>`];
@@ -162,9 +220,17 @@ export function createMoleculeUI({ onTrayChange }) {
         const [ca, an] = atoms[b.a].charge > 0 ? [atoms[b.a], atoms[b.b]] : [atoms[b.b], atoms[b.a]];
         return [`ionic${b.length.toFixed(2)}`, `<li>${ca.symbol}<sup>${chargeText(ca.charge)}</sup> ··· ${an.symbol}<sup>${chargeText(an.charge)}</sup> <span class="muted">ionic · ${b.length.toFixed(3)} Å</span></li>`];
       }
+      // Group bonds of the same kind; show a length range when they differ.
+      const rank = (e) => (e === 'C' ? 0 : e === 'H' ? 2 : 1); // C first, H last: C–O, O–H
+      const [p, q] = [x, y].sort((m, n) => rank(m) - rank(n) || m.localeCompare(n));
+      const key = `${p}${q}${b.order}`;
+      const same = bonds.filter((o) => !o.ionic && o.order === b.order && [atoms[o.a].symbol, atoms[o.b].symbol].sort().join() === [x, y].sort().join());
+      const lo = Math.min(...same.map((o) => o.length)), hi = Math.max(...same.map((o) => o.length));
+      const lengths = hi - lo < 0.005 ? `${lo.toFixed(3)} Å` : `${lo.toFixed(2)}–${hi.toFixed(2)} Å`;
+      const count = same.length > 1 ? ` ×${same.length}` : '';
       const sym = b.delocalized ? '⋯' : BOND_SYMBOL[b.order];
       const word = b.delocalized ? `resonance, order ${b.order}` : BOND_WORD[b.order];
-      return [`${[x, y].sort()}${b.order}${b.length.toFixed(2)}`, `<li>${x}${sym}${y} <span class="muted">${word} · ${b.length.toFixed(3)} Å</span></li>`];
+      return [key, `<li>${p}${sym}${q}${count} <span class="muted">${word} · ${lengths}</span></li>`];
     })).values()];
     const ionRows = mol.ionic ? [mol.cation, mol.anion].map(({ symbol, charge: q }) => {
       const verb = q > 0 ? `gave up ${q} e⁻` : `gained ${-q} e⁻`;
@@ -178,7 +244,9 @@ export function createMoleculeUI({ onTrayChange }) {
       return [text, `<li>${text}</li>`];
     })).values()];
 
-    const badge = mol.source === 'experimental'
+    const badge = mol.source === 'forcefield'
+      ? '<span class="badge estimate" title="Built from the bonding pattern (SMILES) and relaxed with a simple force field; angles are typically within a few degrees of measured values">Force-field geometry</span>'
+      : mol.source === 'experimental'
       ? `<span class="badge measured" title="${mol.crystal ? 'Typical bond lengths from crystal structures' : 'Bond lengths and angles from gas-phase measurements'}">Measured geometry</span>`
       : mol.source === 'ionic'
         ? '<span class="badge estimate" title="Ions placed as far apart as their charges push them, at a distance estimated from ionic radii">Electrostatic estimate</span>'
@@ -197,13 +265,17 @@ export function createMoleculeUI({ onTrayChange }) {
         ${badge}
       </div>
       ${why ? `<p class="explain">${why}</p>` : ''}
+      ${mol.note ? `<p class="explain">${mol.note}</p>` : ''}
       ${chargeNote}
+      ${mol.conformers?.length > 1 ? `<p class="explain muted">This molecule has ${mol.conformers.length} distinct low-energy shapes (conformers), found by relaxing it from different random starts. Pick one under <b>Shapes</b>; they interconvert at room temperature by rotating around single bonds or flexing rings.</p>` : ''}
       <div class="facts">
-        ${angleRows.length ? `<div><h3>Bond angles</h3><ul>${angleRows.join('')}</ul></div>` : ''}
+        ${angleRows.length ? `<div><h3>Bond angles${allAngles ? '' : ` at ${atoms[viewer.selected].symbol}`}</h3><ul>${angleRows.join('')}</ul></div>`
+          : allAngles ? '' : `<div><h3>Bond angles</h3><p class="muted">${viewer.selected == null ? 'Click an atom in the 3D view to show the angles around it.' : 'This atom has only one bond.'}</p></div>`}
         <div><h3>Bonds</h3><ul>${bondRows.join('')}</ul></div>
         ${ionRows ? `<div><h3>Ions</h3><ul>${ionRows.join('')}</ul></div>` : `<div><h3>Hybridization</h3><ul>${atomRows.join('')}</ul></div>`}
       </div>
-      <p class="note">${VIEW_TEXT[mol.ionic && view !== 'structure' ? `ionic${view[0].toUpperCase()}${view.slice(1)}` : view]}</p>`;
+      <p class="note">${VIEW_TEXT[mol.ionic && view !== 'structure' ? `ionic${view[0].toUpperCase()}${view.slice(1)}` : view]}</p>
+      ${mol.smiles ? `<p class="note">SMILES: <code>${mol.smiles}</code></p>` : ''}`;
     renderLegend();
   }
 
@@ -213,14 +285,42 @@ export function createMoleculeUI({ onTrayChange }) {
     const btn = e.target.closest('[data-remove]');
     if (!btn) return;
     const s = btn.dataset.remove;
-    tray.set(s, tray.get(s) - 1);
-    if (!tray.get(s)) tray.delete(s);
-    update();
+    const counts = new Map(tray);
+    counts.set(s, counts.get(s) - 1);
+    setTray(counts, charge);
   });
   $('#tray-clear').addEventListener('click', () => setTray(new Map()));
   $('#examples').addEventListener('click', (e) => {
-    const chip = e.target.closest('[data-formula]');
-    if (chip) setTray(parseFormula(chip.dataset.formula), +chip.dataset.charge);
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    if (chip.dataset.name) loadEntry(KNOWN_MOLECULES.find((m) => m.name === chip.dataset.name));
+    else setTray(parseFormula(chip.dataset.formula), +chip.dataset.charge);
+  });
+  $('#variants').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    if (chip.dataset.variant != null) { variant = +chip.dataset.variant; conformer = 0; }
+    if (chip.dataset.conformer != null) conformer = +chip.dataset.conformer;
+    update();
+  });
+  viewer.onSelectAtom = () => { if (mol && !mol.error) renderInfo(); };
+
+  // Search: a library name (or alias), or else a SMILES string.
+  $('#search').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = $('#search-input').value.trim();
+    if (!text) return;
+    const [hit] = searchLibrary(text);
+    if (hit) { loadEntry(hit); return; }
+    try {
+      const counts = smilesCounts(text);
+      const entry = KNOWN_MOLECULES.find((m) => m.smiles === text);
+      if (entry) loadEntry(entry);
+      else setTray(counts, 0, { smiles: text });
+      $('#search-msg').textContent = '';
+    } catch (err) {
+      $('#search-msg').textContent = `Not a known name, and not valid SMILES: ${err.message}`;
+    }
   });
   $('#charge').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-step]');
@@ -273,14 +373,23 @@ export function createMoleculeUI({ onTrayChange }) {
 
   return {
     addAtom(symbol) {
-      tray.set(symbol, (tray.get(symbol) || 0) + 1);
-      update();
+      const counts = new Map(tray);
+      counts.set(symbol, (counts.get(symbol) || 0) + 1);
+      setTray(counts, charge);
     },
-    /** From a hash like "CO3&q=-2". */
-    loadFormula(str) {
-      const [formula, ...params] = str.split('&');
-      const q = params.find((p) => p.startsWith('q='));
-      setTray(parseFormula(formula), q ? Math.max(-3, Math.min(3, Math.trunc(+q.slice(2)) || 0)) : 0);
+    /** From a hash like "mol=CO3&q=-2", "mol=C6H12O6&v=1&c=2" or "smiles=CCO". */
+    loadHash(hash) {
+      const [head, ...params] = hash.split('&');
+      const num = (k, lo, hi) => {
+        const p = params.find((x) => x.startsWith(`${k}=`));
+        return p ? Math.max(lo, Math.min(hi, Math.trunc(+p.slice(k.length + 1)) || 0)) : 0;
+      };
+      if (head.startsWith('smiles=')) {
+        const smiles = decodeURIComponent(head.slice(7));
+        try { setTray(smilesCounts(smiles), 0, { smiles, conformer: num('c', 0, 9) }); } catch { setTray(new Map()); }
+        return;
+      }
+      setTray(parseFormula(head.split('=')[1] || ''), num('q', -3, 3), { variant: num('v', 0, 20), conformer: num('c', 0, 9) });
     },
     setActive(on) {
       viewer.setActive(on);

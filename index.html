@@ -92,6 +92,14 @@
           <span class="control-label">Try</span>
           <div id="examples" class="examples"></div>
         </div>
+        <form id="search" class="builder-row" autocomplete="off">
+          <span class="control-label">Search</span>
+          <input id="search-input" list="library" placeholder="Name or SMILES, e.g. sucrose, caffeine, CC(=O)O" aria-label="Molecule name or SMILES">
+          <datalist id="library"></datalist>
+          <button class="chip" type="submit">Build</button>
+          <span id="search-msg" class="search-msg"></span>
+        </form>
+        <div id="variants" hidden></div>
       </div>
 
       <div class="stage">
