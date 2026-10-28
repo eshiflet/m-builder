@@ -63,7 +63,7 @@ export function createNucleusUI() {
   const viewer = new NucleusViewer($('#nuc-canvas'));
   let z = 6, neutrons = null;
   let iso = null, modes = null, shape = null, radii = null;
-  let mode = 'none', preferred = 'none', view = 'nucleus';
+  let mode = 'none', preferred = 'auto', view = 'nucleus';
   let spin = 10;
   let stats = null;
 
@@ -88,7 +88,8 @@ export function createNucleusUI() {
     radii = iso.halo ? densityRadii(iso.Z - (iso.halo.kind === 'p' ? iso.halo.halo : 0), iso.halo.core) : densityRadii(iso.Z, iso.N);
     viewer.setNucleus(iso, shape.beta, radii, periods(), modes.rotation?.E ?? null);
     stats = null;
-    if (preferred === 'none' || (modes[preferred] && (preferred !== 'rotation' || modes.rotation))) setMode(preferred);
+    if (preferred === 'auto') setMode(suggestedMode().mode);
+    else if (preferred === 'none' || modes[preferred]) setMode(preferred);
     else setMode('none');
     autoRate();
     history.replaceState(null, '', `#nuc=${iso.symbol}${iso.isDefault ? '' : `-${iso.A}`}`);
@@ -102,10 +103,28 @@ export function createNucleusUI() {
     return p;
   }
 
+  /** The motion that best shows off this nucleus, and why. */
+  function suggestedMode() {
+    const ab = Math.abs(shape.beta);
+    const magic = isMagic(iso.Z) || isMagic(iso.N);
+    if (!modes.dipole) return { mode: 'none', why: 'too few nucleons to move together as a whole' };
+    if (modes.rotation && ab >= 0.1 && shape.depth > 2) {
+      return { mode: 'rotation', why: `it’s rigidly deformed (deforming saves ${shape.depth.toFixed(1)} MeV), so it can turn as a whole` };
+    }
+    if (ab >= 0.05) return { mode: 'quadrupole', why: 'it’s deformed but soft, so its shape wobbles instead of holding steady' };
+    if (!magic && shape.curve) return { mode: 'quadrupole', why: 'it’s round but between closed shells, so its surface vibrates easily' };
+    return { mode: 'dipole', why: magic ? 'a closed shell keeps it round and stiff; its signature motion is protons sloshing against neutrons'
+      : 'it’s round, and every nucleus has this proton-vs-neutron vibration' };
+  }
+
   function setMode(m) {
     mode = m;
     viewer.setMode(m);
-    document.querySelectorAll('#nuc-mode button').forEach((b) => b.classList.toggle('on', b.dataset.value === m));
+    const auto = preferred === 'auto';
+    document.querySelectorAll('#nuc-mode button').forEach((b) => {
+      b.classList.toggle('on', auto ? b.dataset.value === 'auto' : b.dataset.value === m);
+      b.classList.toggle('picked', auto && b.dataset.value === m); // what Auto chose
+    });
     $('#nuc-spin-wrap').hidden = m !== 'rotation' || view !== 'nucleus';
   }
 
@@ -121,8 +140,8 @@ export function createNucleusUI() {
   function render() {
     document.querySelectorAll('#nuc-mode button').forEach((b) => {
       const m = b.dataset.value;
-      b.disabled = m !== 'none' && !modes[m];
-      b.title = m === 'none' ? '' : modes[m] ? `${energyText(modes[m].E)} · ${m === 'rotation' ? 'see spin' : bsText(modes[m].T)}`
+      b.disabled = m !== 'none' && m !== 'auto' && !modes[m];
+      b.title = m === 'auto' ? 'Pick the motion that suits each nucleus' : m === 'none' ? '' : modes[m] ? `${energyText(modes[m].E)} · ${m === 'rotation' ? 'see spin' : bsText(modes[m].T)}`
         : m === 'rotation' ? 'Only deformed nuclei rotate' : 'Needs at least 4 nucleons';
     });
     for (const id of ['nuc-mode-wrap', 'nuc-quarks-wrap', 'nuc-motion-wrap', 'nuc-iso-wrap', 'nuc-rate-wrap', 'nuc-extra-wrap']) $(`#${id}`).hidden = view !== 'nucleus';
@@ -160,9 +179,10 @@ export function createNucleusUI() {
 
     const m = modes[mode];
     const T = mode === 'rotation' && modes.rotation ? rotationPeriod(modes.rotation.E, spin) : m?.T;
+    const autoLine = preferred === 'auto' ? `<b>Auto</b> picked ${mode === 'none' ? 'no motion' : mode} for ${isoLabel(iso)}: ${suggestedMode().why}. ` : '';
     const modeLine = m
-      ? `<p class="explain">${MODE_TEXT[mode]} For ${isoLabel(iso)}: ${mode === 'rotation' ? `E(2⁺) = <b>${energyText(m.E)}</b>; at spin ${spin}ħ one turn takes` : `<b>${energyText(m.E)}</b>, one cycle every`} <b>${bsText(T)}</b> (${sci(T)} s). Amplitudes are exaggerated so you can see them.</p>`
-      : `<p class="explain">${MODE_TEXT.none}</p>`;
+      ? `<p class="explain">${autoLine}${MODE_TEXT[mode]} For ${isoLabel(iso)}: ${mode === 'rotation' ? `E(2⁺) = <b>${energyText(m.E)}</b>; at spin ${spin}ħ one turn takes` : `<b>${energyText(m.E)}</b>, one cycle every`} <b>${bsText(T)}</b> (${sci(T)} s). Amplitudes are exaggerated so you can see them.</p>`
+      : `<p class="explain">${autoLine}${MODE_TEXT.none}</p>`;
 
     const modeRows = Object.entries({ dipole: 'Dipole (p vs n)', breathing: 'Breathing', quadrupole: 'Quadrupole' })
       .map(([k, label]) => `<li>${label}: ${modes[k] ? `${energyText(modes[k].E)} <span class="muted">· ${bsText(modes[k].T)}</span>` : '<span class="muted">—</span>'}</li>`).join('')
@@ -241,7 +261,7 @@ export function createNucleusUI() {
     const b = e.target.closest('button');
     if (!b || b.disabled) return;
     preferred = b.dataset.value;
-    setMode(preferred);
+    setMode(preferred === 'auto' ? suggestedMode().mode : preferred);
     autoRate();
     render();
   });
