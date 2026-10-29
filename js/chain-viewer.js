@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { nextEvent, collide, speed, rng, pointInFuel, FISSION_MEV } from './chain.js';
+import { nextEvent, collide, speed, rng, pointInFuel, FISSION_MEV, DELAYED } from './chain.js';
 
 const CAP = 1200; // tracked neutrons; above this, half are dropped and the rest count double
 const SEGMENTS = 9000; // finished track segments kept for the fading trails
@@ -15,7 +15,16 @@ const MAX_EVENTS = 40000; // per frame; beyond this the clock slows to keep up
 
 export const NUCLIDE_COLORS = { U235: '#ffc94d', U238: '#7d8aa6', Pu239: '#7ee08a' };
 export const REFLECTOR_COLORS = { natU: '#8a93a8', Be: '#b9d6c4', water: '#4d8dff' };
+export const MODERATOR_COLORS = { graphite: '#6b7280', water: '#4d8dff', heavy: '#8fb3ff' };
 export const SPENT_COLOR = '#c2452f';
+export const PRECURSOR_COLOR = '#ffb347';
+export const ROD_COLOR = '#2b2f38';
+const PRECURSORS = 3000;
+
+/** Uranium's color, from ²³⁸U grey toward ²³⁵U gold as the enrichment rises. */
+export function uraniumColor(e) {
+  return new THREE.Color(NUCLIDE_COLORS.U238).lerp(new THREE.Color(NUCLIDE_COLORS.U235), Math.min(1, Math.sqrt(e / 0.2)));
+}
 
 /** Neutron color by energy: fast white-cyan, intermediate sky blue, thermal deep blue. */
 function neutronColor(E, c) {
@@ -54,7 +63,8 @@ export class ChainViewer {
     container.appendChild(this.renderer.domElement);
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000);
-    this.camera.position.set(0, -10, 40);
+    this.camera.up.set(0, 0, 1); // z is up: control rods drop in from the top
+    this.camera.position.set(0, -40, 12);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.autoRotate = true;
@@ -78,6 +88,10 @@ export class ChainViewer {
     this.onMilestone = null; // (html) notable moments, for the caption log
     this.onEnd = null;
     this.onPick = null; // (fission) when a recent fission flash is clicked
+    this.onFrame = null; // (dt) every frame, for the reactor's slower clock
+    this.glowRate = 0; // fission flashes per second while the reactor runs on point kinetics
+    this.glowAcc = 0;
+    this.sites = null; // fission sites to flash at
     this.realT = 0;
 
     this.#buildBuffers();
@@ -108,12 +122,13 @@ export class ChainViewer {
 
   fit() {
     if (!this.sys) return;
-    const R = this.sys.R2;
+    const reactor = this.sys.kind === 'reactor';
+    const R = reactor ? 1.3 * this.sys.R : this.sys.R2; // a reactor's rods stick out above the core
     const fov = (this.camera.fov * Math.PI) / 180;
     const dist = (1.25 * R) / Math.sin(Math.min(fov, fov * this.camera.aspect) / 2);
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-    this.controls.target.set(0, 0, 0);
-    this.camera.position.copy(dir.multiplyScalar(dist));
+    this.controls.target.set(0, 0, reactor ? 0.15 * this.sys.R : 0);
+    this.camera.position.copy(dir.multiplyScalar(dist).add(this.controls.target));
     this.camera.near = dist / 100; this.camera.far = dist * 10;
     this.camera.updateProjectionMatrix();
   }
@@ -134,8 +149,20 @@ export class ChainViewer {
     rg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(REF_DOTS * 3), 3));
     rg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(REF_DOTS * 3), 3));
     this.refDots = new THREE.Points(rg, pointsMat(2.2, { opacity: 0.6 }));
-    this.clipped.push(this.dots.material, this.refDots.material);
-    this.scene.add(this.dots, this.refDots);
+    // Reactor fuel lumps: drawn at their true size.
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+    this.lumpPts = new THREE.Points(lg, new THREE.PointsMaterial({ size: 1, sizeAttenuation: true, map: this.dotTex, alphaTest: 0.5, color: '#9aa3b5' }));
+    this.lumpPts.visible = false;
+    // Delayed-neutron precursors: fission fragments that will shed a neutron seconds from now.
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PRECURSORS * 3), 3));
+    this.precursorPts = new THREE.Points(pg, new THREE.PointsMaterial({ size: 4, sizeAttenuation: false, map: this.glowTex, color: PRECURSOR_COLOR, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.precursorPts.renderOrder = 2;
+    this.rodGroup = new THREE.Group();
+    this.rodMat = new THREE.MeshStandardMaterial({ color: ROD_COLOR, roughness: 0.4, metalness: 0.3 });
+    this.clipped.push(this.dots.material, this.refDots.material, this.lumpPts.material, this.rodMat);
+    this.scene.add(this.dots, this.refDots, this.lumpPts, this.precursorPts, this.rodGroup);
     // Surfaces.
     const shell = (color, opacity) => {
       const m = new THREE.MeshStandardMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, roughness: 0.6 });
@@ -178,29 +205,52 @@ export class ChainViewer {
     this.pickable = []; // recent fissions: { p, nuclide, E, t }
   }
 
-  /** Lay out the fuel ball (and reflector) for a system from chain.js. */
+  /** Lay out the fuel ball (and reflector), or the reactor core, for a system from chain.js. */
   setSystem(sys) {
     const resized = !this.sys || Math.abs(this.sys.R2 - sys.R2) > 1e-6;
     this.stop();
     this.sys = sys;
     const r = rng(12345);
     const c = new THREE.Color();
-    // Fuel dots: each colored by which nuclide it stands for.
+    const reactor = sys.kind === 'reactor';
+    // Fuel dots: each colored by which nuclide it stands for (in a reactor's even mix, just uranium).
     const pos = this.dots.geometry.attributes.position.array, col = this.dots.geometry.attributes.color.array;
     const parts = sys.fuelMat.parts, total = parts.reduce((s, p) => s + p.N, 0);
     this.dotKind = new Array(DOTS);
-    for (let i = 0; i < DOTS; i++) {
+    this.dots.visible = !reactor || !sys.lumps;
+    for (let i = 0; i < DOTS && this.dots.visible; i++) {
       const p = pointInFuel(sys, r);
       pos.set(p, 3 * i);
       let x = r() * total, k = parts[parts.length - 1].key;
       for (const q of parts) { if ((x -= q.N) <= 0) { k = q.key; break; } }
       this.dotKind[i] = k;
-      c.set(NUCLIDE_COLORS[k]).toArray(col, 3 * i);
+      (reactor ? uraniumColor(sys.enrichment) : c.set(NUCLIDE_COLORS[k])).toArray(col, 3 * i);
     }
     this.dotBase = col.slice();
     this.dots.geometry.attributes.position.needsUpdate = this.dots.geometry.attributes.color.needsUpdate = true;
     this.dots.geometry.computeBoundingSphere();
-    this.#buildGrid(pos);
+    this.grid = null;
+    if (!reactor) this.#buildGrid(pos);
+    // Reactor: lumps, moderator and rods.
+    this.lumpPts.visible = reactor && sys.lumps;
+    if (this.lumpPts.visible) {
+      this.lumpPts.geometry.setAttribute('position', new THREE.BufferAttribute(sys.lumpCenters(), 3));
+      this.lumpPts.geometry.computeBoundingSphere();
+      this.lumpPts.material.size = 2 * sys.a;
+      this.lumpPts.material.color.copy(uraniumColor(sys.enrichment));
+    }
+    this.fuelShell.material.color.set(reactor ? MODERATOR_COLORS[sys.moderator] : '#ffcf6b');
+    this.fuelShell.material.opacity = reactor ? (sys.moderator === 'graphite' ? 0.16 : 0.1) : 0.06;
+    this.rodGroup.clear();
+    if (reactor) {
+      const geo = new THREE.CylinderGeometry(sys.rodR, sys.rodR, 1, 24).rotateX(Math.PI / 2);
+      for (const [x, y] of sys.rodXY) {
+        const m = new THREE.Mesh(geo, this.rodMat);
+        m.position.set(x, y, 0);
+        this.rodGroup.add(m);
+      }
+      this.setRods(sys.rods);
+    }
     // Reflector: sparser dots in the shell.
     const rp = this.refDots.geometry.attributes.position.array, rc = this.refDots.geometry.attributes.color.array;
     const has = !!sys.refMat;
@@ -222,6 +272,18 @@ export class ChainViewer {
     if (resized) this.fit();
   }
 
+  /** Move the control rods: 0 = withdrawn, 1 = fully in. */
+  setRods(x) {
+    const sys = this.sys;
+    if (sys?.kind !== 'reactor') return;
+    sys.setRods(x);
+    const top = 1.35 * sys.R, h = Math.max(1e-3, top - sys.zb);
+    for (const m of this.rodGroup.children) { m.scale.set(1, 1, h); m.position.z = sys.zb + h / 2; }
+  }
+
+  /** Fission sites to flash at while the reactor runs on its slow clock. */
+  setSites(sites) { this.sites = sites?.length ? sites : null; }
+
   /** Uniform grid over the fuel dots, to find the dot nearest a fission. */
   #buildGrid(pos) {
     const R = this.sys.R, n = 14, cell = (2 * R) / n;
@@ -237,6 +299,7 @@ export class ChainViewer {
 
   /** The nearest unspent dot of a nuclide near p (searching the bin and its neighbors). */
   #nearestDot(p, nuclide) {
+    if (!this.grid) return -1;
     const { n, cell, R } = this.grid, pos = this.dots.geometry.attributes.position.array;
     const f = (v) => Math.max(0, Math.min(n - 1, Math.floor((v + R) / cell)));
     const bx = f(p[0]), by = f(p[1]), bz = f(p[2]);
@@ -268,7 +331,13 @@ export class ChainViewer {
     this.dots.geometry.attributes.color.array.set(this.dotBase);
     this.dots.geometry.attributes.color.needsUpdate = true;
     const neutrons = [];
-    for (let i = 0; i < count; i++) {
+    const reactor = sys.kind === 'reactor';
+    for (let i = 0; i < count && reactor; i++) {
+      // A start-up source inside the core (CP-1 had a radium–beryllium one).
+      const p = pointInFuel(sys, r), z = 2 * r() - 1, ph = 2 * Math.PI * r(), s = Math.sqrt(1 - z * z);
+      neutrons.push(this.#spawn({ p, d: [s * Math.cos(ph), s * Math.sin(ph), z], E, region: sys.regionAt(p), gen: 0 }, 0));
+    }
+    for (let i = 0; i < count && !reactor; i++) {
       const target = pointInFuel(sys, r);
       const z = 2 * r() - 1, ph = 2 * Math.PI * r(), s = Math.sqrt(1 - z * z);
       const from = [1.6 * sys.R2 * s * Math.cos(ph), 1.6 * sys.R2 * s * Math.sin(ph), 1.6 * sys.R2 * z];
@@ -279,12 +348,14 @@ export class ChainViewer {
     this.run = {
       T: 0, W: 1, neutrons, gen: [count], genAlive: [count], fissions: 0, captures: 0, escapes: 0, born: count,
       fissionBy: {}, capturedBy: {}, peak: count, done: false, reason: null, milestones: new Set(), lagging: false, frames: 0,
-      startCount: count, seed, firstFissionT: null,
+      startCount: count, seed, firstFissionT: null, precursors: [], delayedMade: 0, delayedOut: 0,
     };
     this.pickable = [];
     this.flashes.forEach((f) => { f.born = -1e9; f.s.visible = f.a.visible = f.b.visible = false; });
     this.segBorn.fill(-1e9);
-    this.onMilestone?.(`${count === 1 ? 'One neutron' : `${count} neutrons`} at ${E} MeV ${count === 1 ? 'flies' : 'fly'} into ${sys.refMat ? `the ${sys.refMat.name.toLowerCase()} reflector` : 'the bare ball of fuel'}.`);
+    this.onMilestone?.(reactor
+      ? `${count === 1 ? 'One neutron' : `${count} neutrons`} at ${E} MeV from a source inside the core.`
+      : `${count === 1 ? 'One neutron' : `${count} neutrons`} at ${E} MeV ${count === 1 ? 'flies' : 'fly'} into ${sys.refMat ? `the ${sys.refMat.name.toLowerCase()} reflector` : 'the bare ball of fuel'}.`);
     this.#emitStats(true);
   }
 
@@ -300,6 +371,7 @@ export class ChainViewer {
   stop() {
     this.run = null;
     this.#clearNeutrons();
+    this.precursorPts.geometry.setDrawRange(0, 0);
   }
 
   get running() { return !!this.run && !this.run.done; }
@@ -314,7 +386,7 @@ export class ChainViewer {
   #plan(n) {
     // Region −1: still flying in from outside, toward the outer surface.
     const ev = n.region < 0
-      ? (() => { const point = this.#surfaceEntry(n.p, n.d); return { kind: 'cross', s: Math.hypot(point[0] - n.p[0], point[1] - n.p[1], point[2] - n.p[2]), point, region: this.sys.refMat ? 1 : 0 }; })()
+      ? (() => { const point = this.#surfaceEntry(n.p, n.d); return { kind: 'cross', s: Math.hypot(point[0] - n.p[0], point[1] - n.p[1], point[2] - n.p[2]), point, region: this.sys.regionAt(point) }; })()
       : nextEvent(this.sys, n, this.r);
     n.ev = ev;
     n.v = speed(n.E);
@@ -347,6 +419,17 @@ export class ChainViewer {
     const run = this.run, sys = this.sys;
     let events = 0;
     const list = run.neutrons;
+    // Delayed neutrons whose precursor has decayed.
+    if (run.precursors.length && run.precursors.some((q) => q.tEmit <= T)) {
+      run.precursors = run.precursors.filter((q) => {
+        if (q.tEmit > T) return true;
+        run.genAlive[q.gen] = (run.genAlive[q.gen] ?? 0) + 1;
+        run.delayedOut += run.W;
+        list.push(this.#spawn({ p: q.p, d: q.d, E: q.E, region: q.region, gen: q.gen }, q.tEmit));
+        if (!run.milestones.has('delayed')) { run.milestones.add('delayed'); this.onMilestone?.(`A <b>delayed neutron</b> appears ${fmtTime(q.tEmit)} in, from a fission fragment that β-decayed.`); }
+        return false;
+      });
+    }
     for (let i = 0; i < list.length; i++) {
       const n = list[i];
       while (n.alive && n.tEnd <= T) {
@@ -365,7 +448,7 @@ export class ChainViewer {
             run.fissionBy[res.nuclide] = (run.fissionBy[res.nuclide] ?? 0) + run.W;
             if (run.firstFissionT == null) {
               run.firstFissionT = t;
-              this.onMilestone?.(`<b>First fission</b> after ${t.toFixed(2)} ns: a ${res.nuclide.replace(/\d+/, (m) => '-' + m)} nucleus splits and frees ${res.out.length} neutrons.`);
+              this.onMilestone?.(`<b>First fission</b> after ${fmtTime(t)}: a ${res.nuclide.replace(/\d+/, (m) => '-' + m)} nucleus splits and frees ${res.out.length} neutrons.`);
             }
             this.#flash(n.p);
             this.pickable.push({ p: n.p, nuclide: res.nuclide, E: res.E, t: this.realT });
@@ -374,11 +457,20 @@ export class ChainViewer {
               const k = this.#nearestDot(n.p, res.nuclide);
               if (k >= 0) { this.spent[k] = 1; new THREE.Color(SPENT_COLOR).toArray(this.dots.geometry.attributes.color.array, 3 * k); this.dots.geometry.attributes.color.needsUpdate = true; }
             }
-            const g = n.gen + 1;
-            run.gen[g] = (run.gen[g] ?? 0) + run.W * res.out.length;
-            run.genAlive[g] = (run.genAlive[g] ?? 0) + res.out.length;
-            run.born += run.W * res.out.length;
-            for (const o of res.out) list.push(this.#spawn({ ...o, gen: g }, t));
+            const g = n.gen + 1, prompt = res.out.filter((o) => !o.delayed);
+            run.gen[g] = (run.gen[g] ?? 0) + run.W * prompt.length;
+            run.genAlive[g] = (run.genAlive[g] ?? 0) + prompt.length;
+            run.born += run.W * prompt.length;
+            for (const o of prompt) list.push(this.#spawn({ ...o, gen: g }, t));
+            for (const o of res.out) {
+              if (!o.delayed) continue;
+              run.delayedMade += run.W;
+              if (run.precursors.length < PRECURSORS) run.precursors.push({ ...o, gen: g, tEmit: t + o.delay * 1e9 });
+              if (!run.milestones.has('precursor')) {
+                run.milestones.add('precursor');
+                this.onMilestone?.(`One of the fission fragments will shed a <b>delayed neutron</b> in about ${o.delay.toFixed(1)} s (orange dot). Only ${(100 * DELAYED[res.nuclide].beta).toFixed(2)}% of ${res.nuclide.replace(/\d+/, (m) => '-' + m)}’s neutrons come this way, but they’re what makes a reactor controllable.`);
+              }
+            }
           }
           continue;
         }
@@ -403,7 +495,7 @@ export class ChainViewer {
     n.alive = false;
     if (how === 'escape') {
       run.escapes += run.W;
-      if (!run.milestones.has('escape')) { run.milestones.add('escape'); this.onMilestone?.('A neutron <b>escapes</b> through the surface. Leakage like this is what a ball too small can’t make up for.'); }
+      if (!run.milestones.has('escape')) { run.milestones.add('escape'); this.onMilestone?.(`A neutron <b>escapes</b> through the surface. Leakage like this is what a ${this.sys.kind === 'reactor' ? 'core' : 'ball'} too small can’t make up for.`); }
     }
     if (how === 'capture') {
       run.captures += run.W;
@@ -424,6 +516,7 @@ export class ChainViewer {
         run.genAlive[n.gen]--;
         return false;
       });
+      run.precursors = run.precursors.filter(() => this.r() < 0.5);
       run.W *= 2;
       if (!run.milestones.has('thin')) { run.milestones.add('thin'); this.onMilestone?.(`Over ${CAP.toLocaleString()} neutrons in flight: from now on each one drawn stands for several (shown below the view).`); }
     }
@@ -459,14 +552,16 @@ export class ChainViewer {
       T: run.T, W: run.W, alive, inFlight: alive * run.W, fissions: run.fissions, captures: run.captures, escapes: run.escapes,
       gen: run.gen, kLive, done: run.done, reason: run.reason, lagging: run.lagging, energyMeV: run.fissions * FISSION_MEV,
       fissionBy: run.fissionBy, capturedBy: run.capturedBy, burn: run.fissions / this.sys.fissileAtoms,
+      waiting: run.precursors.length * run.W, delayedOut: run.delayedOut,
     });
   }
 
   #finish(reason) {
     const run = this.run;
     run.done = true; run.reason = reason;
+    const waiting = run.precursors.length;
     this.onMilestone?.(reason === 'died'
-      ? `The chain <b>died out</b> after ${run.gen.length - 1} generation${run.gen.length === 2 ? '' : 's'} and ${fmtTime(run.T)}.`
+      ? `The chain <b>died out</b> after ${run.gen.length - 1} generation${run.gen.length === 2 ? '' : 's'} and ${fmtTime(run.T)}.${waiting ? ` ${waiting} precursor${waiting > 1 ? 's' : ''} will still release delayed neutrons over the next minute or so${this.sys.kind === 'reactor' ? ': <b>Run the reactor</b> follows that slower clock' : ''}.` : ''}`
       : reason === 'runaway'
         ? `Stopped after ${fmtTime(run.T)}: ${(100 * run.fissions / this.sys.fissileAtoms).toFixed(1)}% of the fuel has split. A real core would have blown itself apart long before this (the heat makes it expand, and the gaps let neutrons leak out), which ends the chain.`
         : `Stopped at ${fmtTime(run.T)}.`);
@@ -485,7 +580,14 @@ export class ChainViewer {
       this.camera.getWorldDirection(dir);
       this.clip.setFromNormalAndCoplanarPoint(dir, this.controls.target);
     }
+    this.onFrame?.(dt);
     const run = this.run;
+    if (this.glowRate > 0 && this.sites && !(run && !run.done)) {
+      this.r ??= rng(99);
+      this.glowAcc += this.glowRate * dt;
+      for (let i = 0; i < 40 && this.glowAcc >= 1; i++, this.glowAcc--) this.#flash(this.sites[Math.floor(this.r() * this.sites.length)]);
+      this.glowAcc = Math.min(this.glowAcc, 1);
+    }
     if (run && !run.done && !this.paused) {
       const goal = run.T + dt * this.speed;
       if (this.#advance(goal)) run.T = goal;
@@ -521,6 +623,14 @@ export class ChainViewer {
       }
     }
     this.neutronPts.geometry.setDrawRange(0, k);
+    // Precursors, pulsing gently.
+    const pp = this.precursorPts.geometry.attributes.position.array;
+    const pre = run?.precursors ?? [];
+    for (let i = 0; i < pre.length; i++) pp.set(pre[i].p, 3 * i);
+    this.precursorPts.geometry.setDrawRange(0, pre.length);
+    this.precursorPts.geometry.attributes.position.needsUpdate = true;
+    this.precursorPts.geometry.computeBoundingSphere();
+    this.precursorPts.material.opacity = 0.55 + 0.35 * Math.sin(this.realT * 4);
     this.heads.geometry.setDrawRange(0, 2 * k);
     this.neutronPts.geometry.attributes.position.needsUpdate = this.neutronPts.geometry.attributes.color.needsUpdate = true;
     this.heads.geometry.attributes.position.needsUpdate = this.heads.geometry.attributes.color.needsUpdate = true;
@@ -578,6 +688,7 @@ export class ChainViewer {
 
 export function fmtTime(ns) {
   if (ns < 1) return `${(ns * 1000).toFixed(0)} ps`;
+  if (ns >= 1e9) return `${(ns / 1e9).toFixed(2)} s`;
   if (ns < 1000) return `${ns < 10 ? ns.toFixed(1) : ns.toFixed(0)} ns`;
   if (ns < 1e6) return `${(ns / 1000).toFixed(ns < 1e4 ? 2 : 1)} µs`;
   return `${(ns / 1e6).toFixed(2)} ms`;

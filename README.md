@@ -305,24 +305,49 @@ negative. **Binding energy** recolors by B/A, which peaks near iron. Scroll to
 zoom, drag to pan, click a square for details, and double-click to open that
 nucleus in 3D.
 
-**Chain reaction** (a View option) is a 3D ball of fuel, optionally inside a
-reflector. **▶ Start chain** sends in 1, 10 or 100 neutrons and follows each
-one with Monte Carlo neutron transport, in real centimetres and nanoseconds.
-Each neutron flies a random distance set by the cross sections, then scatters,
-is captured, or splits a nucleus, which frees 2–3 new neutrons. Fissions flash
-and turn their dot red, and trails show neutrons branching and leaking out
-through the surface. Controls: **Fuel** (uranium with any ²³⁵U share, or
-plutonium-239), **Fuel radius**, **Reflector** (natural uranium, beryllium or
-water, with a thickness), playback speed in simulated nanoseconds per second
-(**Auto** aims for one generation every 2.5 s), and a cutaway. A Web Worker
-works out k and the critical size for the current setup. The panel shows that
-prediction, a live readout (neutrons in flight, fissions, energy in joules and
-TNT, measured k) and a log chart of neutrons per generation. Click a flash to
-watch that fission in the nucleus view. The cross sections are energy-averaged
-evaluated values. With them, the Godiva, Jezebel and Flattop benchmark critical
-experiments come out within 2% of k = 1. Above 1,200 neutrons in flight, half
-are dropped at random and the rest count double (Russian roulette). Not
-modeled yet: delayed neutrons, moderated reactors, control rods, and heating.
+**Chain reaction** (a View option) has two systems.
+
+*Metal ball*: a 3D ball of fuel, optionally inside a reflector. **▶ Start chain**
+sends in 1, 10 or 100 neutrons and follows each one with Monte Carlo neutron
+transport, in real centimetres and nanoseconds. Each neutron flies a random
+distance set by the cross sections, then scatters, is captured, or splits a
+nucleus, which frees 2–3 new neutrons. Fissions flash and turn their dot red,
+and trails show neutrons branching and leaking out through the surface.
+Controls: **Fuel** (uranium with any ²³⁵U share, or plutonium-239), **Fuel
+radius**, and **Reflector** (natural uranium, beryllium or water, with a
+thickness). With these cross sections, the Godiva, Jezebel and Flattop
+benchmark critical experiments come out within about 1% of k = 1.
+
+*Reactor core*: a sphere holding a cubic lattice of uranium-metal lumps in
+**graphite**, **water** or **heavy water**, with nine boron-carbide **control
+rods** that drop in from the top. Presets are CP-1 (Chicago 1942), a
+water-cooled core with 4% fuel, and a heavy-water core with natural uranium.
+Sliders set the lump size, the spacing between lumps and the core radius;
+**Mixed evenly** spreads the same fuel uniformly through the moderator.
+²³⁸U's resonances below 4 keV are drawn individually and Doppler-broadened,
+so lumping really helps, as it did for CP-1. Their dilute resonance integral
+comes out at 277 b (measured 275 b). Natural uranium in graphite gives
+k∞ = 1.054 in lumps and 0.67 mixed evenly. The panel splits k∞ into the four
+factors (η, f, p, ε) and gives the migration length, k at the current rod
+position (fitted through three rod positions), the rods' worth in dollars and
+the critical size. **▶ Run the reactor** switches to the seconds-to-minutes
+clock: point kinetics with six delayed-neutron groups, fed with k, β and the
+prompt generation time from the transport runs. Pull the rods out (they move
+2% of their travel per second) and watch the power and the period on a log
+chart. The panel also says when the core is supercritical on delayed neutrons
+or prompt critical. **SCRAM** drops the rods; an automatic SCRAM trips on a
+period under 10 s or power above 10 MW.
+
+Both systems: every fission frees a measured fraction of delayed neutrons,
+which wait as orange precursor dots and appear seconds later. A Web Worker
+works out k and the critical size. The live readout shows neutrons in flight,
+fissions, energy in joules and TNT, the measured prompt k, and a log chart of
+neutrons per generation. Playback runs in simulated time per second
+(**Auto** aims for one generation every 2.5 s), with a cutaway option. Click a
+flash to watch that fission in the nucleus view. Above 1,200 neutrons in
+flight, half are dropped at random and the rest count double (Russian
+roulette). Not modeled: temperature feedback, cladding and coolant channels,
+xenon, burn-up, and the fuel heating up and expanding.
 
 **Quarks** shows three quarks inside every nucleon, with gluon lines and color
 charges that keep swapping. **Inside a proton / neutron** zooms into one
@@ -413,7 +438,7 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 - `js/nucleus-viewer.js`: nucleon dynamics (mean field, NN force, thermostat) and the three.js nucleus and nucleon scenes
 - `js/reactions.js`: compound-nucleus reactions (Coulomb tunneling, photoabsorption, level densities, decay widths, cascades, fission splits)
 - `js/bombard.js`: turns one collision into animation stages, captions, real timings, odds, energy budget and products
-- `js/chain.js`: neutron transport for chain reactions (cross sections, fission spectrum, scattering kinematics, k by power iteration, critical radius)
+- `js/chain.js`: neutron transport for chain reactions (cross sections, ²³⁸U resonances, delayed neutrons, ball and reactor-lattice geometry, k and four factors by power iteration, critical size, point kinetics)
 - `js/chain-worker.js`: computes k and the critical size off the main thread
 - `js/chain-viewer.js`: the 3D chain-reaction scene and live simulation
 - `js/chain-ui.js`: chain-reaction controls and readout

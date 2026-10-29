@@ -150,10 +150,33 @@
         </div>
         <div id="nuc-chain-controls" class="chain-controls" hidden>
           <div class="control">
-            <span class="control-label">Fuel</span>
-            <div class="segmented" id="chain-fuel">
-              <button data-value="U" class="on">Uranium</button>
-              <button data-value="Pu">Plutonium-239</button>
+            <span class="control-label">System</span>
+            <div class="segmented" id="chain-system">
+              <button data-value="ball" class="on">Metal ball</button>
+              <button data-value="reactor">Reactor core</button>
+            </div>
+          </div>
+          <div id="chain-reactor-controls" class="chain-controls" hidden>
+            <div class="control">
+              <span class="control-label">Start from</span>
+              <div id="chain-presets" class="examples"></div>
+            </div>
+            <div class="control">
+              <span class="control-label">Moderator</span>
+              <div class="segmented" id="chain-mod">
+                <button data-value="graphite" class="on">Graphite</button>
+                <button data-value="water">Water</button>
+                <button data-value="heavy">Heavy water</button>
+              </div>
+            </div>
+          </div>
+          <div id="chain-ball-controls" class="chain-controls">
+            <div class="control">
+              <span class="control-label">Fuel</span>
+              <div class="segmented" id="chain-fuel">
+                <button data-value="U" class="on">Uranium</button>
+                <button data-value="Pu">Plutonium-239</button>
+              </div>
             </div>
           </div>
           <div class="control" id="chain-enrich-wrap">
@@ -162,23 +185,65 @@
             <span id="chain-enrich-value" class="iso-value"></span>
             <div id="chain-enrich-presets" class="examples"></div>
           </div>
-          <label class="control">
-            <span class="control-label">Fuel radius</span>
-            <input id="chain-radius" type="range" min="1" max="40" step="0.1" aria-label="Radius of the fuel ball">
-            <span id="chain-radius-value" class="iso-value"></span>
-          </label>
-          <div class="control">
-            <span class="control-label">Reflector</span>
-            <div class="segmented" id="chain-ref">
-              <button data-value="none" class="on">None</button>
-              <button data-value="natU">Natural uranium</button>
-              <button data-value="Be">Beryllium</button>
-              <button data-value="water">Water</button>
+          <div id="chain-ball-controls-2" class="chain-controls">
+            <label class="control">
+              <span class="control-label">Fuel radius</span>
+              <input id="chain-radius" type="range" min="1" max="40" step="0.1" aria-label="Radius of the fuel ball">
+              <span id="chain-radius-value" class="iso-value"></span>
+            </label>
+            <div class="control">
+              <span class="control-label">Reflector</span>
+              <div class="segmented" id="chain-ref">
+                <button data-value="none" class="on">None</button>
+                <button data-value="natU">Natural uranium</button>
+                <button data-value="Be">Beryllium</button>
+                <button data-value="water">Water</button>
+              </div>
+              <span id="chain-thick-wrap"><input id="chain-thick" type="range" min="1" max="30" step="1" aria-label="Reflector thickness"> <span id="chain-thick-value" class="iso-value"></span></span>
             </div>
-            <span id="chain-thick-wrap"><input id="chain-thick" type="range" min="1" max="30" step="1" aria-label="Reflector thickness"> <span id="chain-thick-value" class="iso-value"></span></span>
+          </div>
+          <div id="chain-reactor-controls-2" class="chain-controls" hidden>
+            <div class="control">
+              <span class="control-label">Fuel</span>
+              <div class="segmented" id="chain-layout">
+                <button data-value="lumps" class="on">Lumps</button>
+                <button data-value="mixed">Mixed evenly</button>
+              </div>
+            </div>
+            <label class="control">
+              <span class="control-label">Lump radius</span>
+              <input id="chain-lump" type="range" min="-0.7" max="1" step="0.005" aria-label="Radius of each fuel lump">
+              <span id="chain-lump-value" class="iso-value"></span>
+            </label>
+            <label class="control">
+              <span class="control-label">Lump spacing</span>
+              <input id="chain-pitch" type="range" min="-0.3" max="1.7" step="0.005" aria-label="Distance between fuel lumps">
+              <span id="chain-pitch-value" class="iso-value"></span>
+            </label>
+            <label class="control">
+              <span class="control-label">Core radius</span>
+              <input id="chain-core" type="range" min="0.7" max="2.85" step="0.002" aria-label="Radius of the reactor core">
+              <span id="chain-core-value" class="iso-value"></span>
+            </label>
+            <div class="control">
+              <span class="control-label">Control rods</span>
+              <input id="chain-rods" type="range" min="0" max="100" step="0.1" value="100" aria-label="Control rod insertion">
+              <span id="chain-rods-value" class="iso-value"></span>
+              <button id="chain-scram" class="chip scram" title="Drop every rod in at once">SCRAM</button>
+            </div>
+            <div class="control">
+              <span class="control-label">Reactor</span>
+              <button id="chain-run" class="chip fire">▶ Run the reactor</button>
+              <div class="segmented small" id="chain-kspeed">
+                <button data-value="1" class="on">1×</button>
+                <button data-value="10">10×</button>
+                <button data-value="100">100×</button>
+              </div>
+              <label class="toggle" title="Drop the rods automatically if the power rises faster than ×e in 10 s, or passes 10 MW"><input id="chain-trip" type="checkbox" checked> Automatic SCRAM</label>
+            </div>
           </div>
           <div class="control">
-            <span class="control-label">Start with</span>
+            <span class="control-label">Watch neutrons</span>
             <div class="segmented small" id="chain-count">
               <button data-value="1" class="on">1 neutron</button>
               <button data-value="10">10</button>
@@ -189,7 +254,7 @@
           </div>
           <div class="control">
             <span class="control-label">Playback</span>
-            <input id="chain-speed" type="range" min="-1" max="5" step="0.01" aria-label="Simulated time per second">
+            <input id="chain-speed" type="range" min="-1" max="7" step="0.01" aria-label="Simulated time per second">
             <span id="chain-speed-value" class="iso-value"></span>
             <button id="chain-speed-auto" class="chip" title="About one generation every 2.5 seconds">Auto</button>
           </div>

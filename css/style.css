@@ -626,3 +626,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
 ul.chain-facts { margin: 4px 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
 ul.chain-facts li { margin: 2px 0; }
 .chain-chart .curve { stroke: #ff8a4d; }
+.k-card.delayed { border-left-color: #ffb347; }
+.chip.scram { border-color: #ff6b4d; color: #ff6b4d; font-weight: 700; letter-spacing: 0.04em; }
+.chip.scram:hover { background: color-mix(in srgb, #ff6b4d 18%, transparent); }
+p.four { font-variant-numeric: tabular-nums; font-size: 13px; margin: 4px 0; }
+.chain-chart.kin .curve { stroke: #ffd75e; }
