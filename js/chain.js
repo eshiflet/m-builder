@@ -418,7 +418,7 @@ function add(p, d, s) { return [p[0] + d[0] * s, p[1] + d[1] * s, p[2] + d[2] * 
  * Regions: 0 = fuel, 1 = reflector.
  */
 export function makeSystem(cfg) {
-  if (cfg.kind === 'reactor') return cfg.design === 'ap1000' ? makePinCore(cfg) : makeReactor(cfg);
+  if (cfg.kind === 'reactor') return PWR_DESIGNS[cfg.design] ? makePinCore(cfg) : makeReactor(cfg);
   const { fuel, enrichment, R, reflector = 'none', T = 0 } = cfg;
   const fuelMat = fuelMaterial(fuel, enrichment);
   const refMat = reflector !== 'none' && T > 0 ? REFLECTORS[reflector]() : null;
@@ -649,8 +649,64 @@ export function ap1000Layout() {
   return list;
 }
 
-const CELL = { WATER: 0, FUEL: 1, IFBA: 2, GUIDE: 3, BLACK: 4, GRAY_AIC: 5, GRAY_SS: 6, PYREX: 7, INSTRUMENT: 8 };
-const PIN_REG = { FUEL0: 0, WATER: 1, AIC: 2, ZR: 3, GAP: 4, FUEL1: 5, FUEL2: 6, SS: 7, GLASS: 8, IFBA: 9 };
+// TVA's Sequoyah Nuclear Plant, on Chickamauga Lake north of Chattanooga: two Westinghouse
+// four-loop PWRs (Units 1 and 2, 1981 and 1982), 3,455 MWt each. 193 assemblies of standard
+// 17 × 17 fuel, 12 ft of active fuel, a steel baffle round the core, and 53 rod clusters of
+// silver–indium–cadmium (80/15/5, 142 in of absorber) in four control banks (A–D) and four
+// shutdown banks (SA–SD), at the positions TVA gave the NRC in 2019. Sequoyah now burns mixed,
+// part-used fuel; this is a fresh first core, and its loading (three enrichments, borosilicate
+// "Pyrex" absorber rods) is that of its identical twin Watts Bar Unit 1, whose first core and
+// startup measurements ORNL published as the VERA benchmark.
+export const SEQUOYAH = {
+  assemblies: 193, assemblyPitch: 21.5, n: 17, H: 365.76, // 144 in of active fuel
+  pelletR: 0.4096, cladIR: 0.418, cladOR: 0.475, guideIR: 0.561, guideOR: 0.602,
+  enrich: [0.0211, 0.02619, 0.031], fuelDensity: 10.257,
+  aicR: 0.433, rodCladR: 0.484, grayR: 0.203, grayCladR: 0.250,
+  equivalentR: 168.5, barrelR: 187.96, reflector: 25, baffle: true, // 132.7 in core, 148 in barrel ID
+  pyrexLength: 360, ifbaLength: 0, rodSpeed: 1.905, // 72 steps of 5/8 in a minute
+  hot: { T: 565, water: 0.743 }, cold: { T: 293, water: 0.998 },
+  // Measured at Watts Bar 1's first startup (hot zero power):
+  criticalBoronHot: 1291, boronWorth: 10.77, bankDWorth: 1342, allBanksSum: 6467,
+};
+
+// Sequoyah's rod clusters by core row (1–15) and column (R … A), from TVA's 2019 map.
+const SEQUOYAH_RODS = {
+  2: { M: 'SA', K: 'B', H: 'C', F: 'B' }, 3: { L: 'SD', J: 'SB', G: 'SB', E: 'SC' },
+  4: { M: 'D', H: 'D', D: 'D', B: 'SA' }, 5: { N: 'SC', L: 'SA', E: 'SA', C: 'SD' },
+  6: { P: 'B', K: 'C', H: 'A', F: 'C', B: 'B' }, 7: { N: 'SB', C: 'SB' },
+  8: { P: 'C', M: 'D', K: 'A', H: 'D', F: 'A', D: 'D', B: 'C' }, 9: { N: 'SB', C: 'SB' },
+  10: { P: 'B', K: 'C', H: 'A', F: 'C', B: 'B' }, 11: { N: 'SD', L: 'SA', E: 'SA', C: 'SC' },
+  12: { P: 'SA', M: 'D', H: 'D', D: 'D' }, 13: { L: 'SC', J: 'SB', G: 'SB', E: 'SD' },
+  14: { K: 'B', H: 'C', F: 'B', D: 'SA' },
+};
+// Watts Bar 1, first core, one quarter from the centre out: [enrichment region, Pyrex rods].
+const WBN1_QUARTER = [
+  [[0, 0], [1, 20], [0, 0], [1, 20], [0, 0], [1, 20], [0, 0], [2, 12]],
+  [[1, 20], [0, 0], [1, 24], [0, 0], [1, 20], [0, 0], [2, 24], [2, 0]],
+  [[0, 0], [1, 24], [0, 0], [1, 20], [0, 0], [1, 16], [0, 0], [2, 8]],
+  [[1, 20], [0, 0], [1, 20], [0, 0], [1, 20], [0, 0], [2, 16], [2, 0]],
+  [[0, 0], [1, 20], [0, 0], [1, 20], [1, 0], [1, 24], [2, 0]],
+  [[1, 20], [0, 0], [1, 16], [0, 0], [1, 24], [2, 12], [2, 0]],
+  [[0, 0], [2, 24], [0, 0], [2, 16], [2, 0], [2, 0]],
+  [[2, 12], [2, 0], [2, 8], [2, 0]],
+];
+
+/** Sequoyah's 193 positions, with Watts Bar 1's first-core loading and Sequoyah's rod banks. */
+export function sequoyahLayout() {
+  const COLS = 'RPNMLKJHGFEDCBA', list = [];
+  for (let j = -7; j <= 7; j++) for (let i = -7; i <= 7; i++) {
+    const q = WBN1_QUARTER[Math.abs(j)]?.[Math.abs(i)];
+    if (!q) continue;
+    const bank = SEQUOYAH_RODS[j + 8]?.[COLS[i + 7]] ?? null;
+    list.push({ i, j, region: q[0], pyrex: q[1], ifba: 0, control: bank ? 1 : 0, bank });
+  }
+  return list;
+}
+
+const PWR_DESIGNS = { ap1000: { ...AP1000, layout: ap1000Layout }, sequoyah: { ...SEQUOYAH, layout: sequoyahLayout } };
+
+const CELL = { WATER: 0, FUEL: 1, IFBA: 2, GUIDE: 3, BLACK: 4, GRAY_AIC: 5, GRAY_SS: 6, PYREX: 7, INSTRUMENT: 8, BAFFLE: 9 };
+const PIN_REG = { FUEL0: 0, WATER: 1, AIC: 2, ZR: 3, GAP: 4, FUEL1: 5, FUEL2: 6, SS: 7, GLASS: 8, IFBA: 9, BAFFLE: 10 };
 const FUEL_REGIONS = [PIN_REG.FUEL0, PIN_REG.FUEL1, PIN_REG.FUEL2];
 
 /** A material from atom densities (atoms per barn·cm). */
@@ -683,7 +739,7 @@ function besselJ0(x) {
 }
 
 /**
- * The AP1000 core, every rod in it: fuel rods (pellet, helium gap, cladding), guide tubes with
+ * A PWR core (the AP1000 or Sequoyah), every rod in it: fuel rods (pellet, helium gap, cladding), guide tubes with
  * control rodlets or burnable-absorber rods, all in borated water, inside the core barrel with
  * water above and below the fuel. Options: boron (ppm), hot (hot zero power, else cold), absorbers
  * (the first core's burnable absorbers), rods (0 out … 1 in; all 69 clusters move together).
@@ -692,7 +748,7 @@ function besselJ0(x) {
  * rodlet in every guide tube (as in the VERA benchmark's rodded assembly).
  */
 function makePinCore(cfg) {
-  const A = AP1000, { boron = 1382, hot = true, absorbers = true, infinite = false, lattice = 'assembly', insert = null } = cfg;
+  const A = PWR_DESIGNS[cfg.design], { boron = A.criticalBoronHot, hot = true, absorbers = true, infinite = false, lattice = 'assembly', insert = null, banks = null } = cfg;
   const state = hot ? A.hot : A.cold, kT = K_BOLTZMANN * (cfg.T ?? state.T);
   const enrich = cfg.enrich ?? A.enrich;
   const fuels = enrich.map((w) => uo2(w, cfg.fuelDensity ?? A.fuelDensity));
@@ -702,7 +758,9 @@ function makePinCore(cfg) {
   const ss = makeMaterial('Stainless steel', 8.0, [['SS', 1]]);
   const glass = atomMaterial('Borosilicate glass', 2.25, [['B10', 9.62e-4], ['B11', 3.87e-3], ['Si28', 0.01975], ['O16', 0.04675]]);
   const ifba = atomMaterial('Boride coating', 3.85, [['B10', 0.01802], ['Zr', 0.009]]);
-  const mats = [fuels[0], water, agInCd(), zr, gap, fuels[1] ?? fuels[0], fuels[2] ?? fuels[0], ss, glass, ifba];
+  // The baffle: steel plates 2.22 cm thick round the core, here filling the two rod cells outside it.
+  const baffle = makeMaterial('Stainless steel baffle', (8.0 * 2.22) / (2 * (A.assemblyPitch / A.n)), [['SS', 1]]);
+  const mats = [fuels[0], water, agInCd(), zr, gap, fuels[1] ?? fuels[0], fuels[2] ?? fuels[0], ss, glass, ifba, baffle];
   for (const m of mats) m.kT = kT;
   const FUEL_OF = [PIN_REG.FUEL0, PIN_REG.FUEL1, PIN_REG.FUEL2];
 
@@ -737,14 +795,15 @@ function makePinCore(cfg) {
   // The cell grid: P cm square cells, NX across. One kind and fuel region per cell.
   const n = A.n;
   const P = infinite && lattice === 'pin' ? (cfg.pinPitch ?? 1.26) : A.assemblyPitch / n; // the inter-assembly gap shared out among the cells
-  const NX = infinite ? (lattice === 'pin' ? 1 : n) : 15 * n;
+  const PAD = infinite ? 0 : 2; // rod cells round the 15 × 15 assemblies, for the baffle
+  const NX = infinite ? (lattice === 'pin' ? 1 : n) : 15 * n + 2 * PAD;
   const kindT = new Uint8Array(NX * NX), fuelT = new Uint8Array(NX * NX);
   const assemblyKinds = (a) => {
     const k = new Uint8Array(n * n).fill(CELL.FUEL);
     k[8 * n + 8] = CELL.INSTRUMENT;
     GUIDE_TUBES.forEach(([gi, gj], t) => {
       let kind = CELL.GUIDE;
-      if (a.control === 1) kind = CELL.BLACK;
+      if (a.control === 1 && (!banks || !a.bank || banks.includes(a.bank))) kind = CELL.BLACK;
       else if (a.control === 2) kind = t % 2 ? CELL.GRAY_SS : CELL.GRAY_AIC;
       else if (absorbers && t < a.pyrex) kind = CELL.PYREX;
       k[gi * n + gj] = kind;
@@ -764,14 +823,25 @@ function makePinCore(cfg) {
     kindT.set(k);
     fuelT.fill(cfg.enrich ? 0 : 1);
   } else {
-    layout = ap1000Layout();
+    layout = A.layout();
     for (const a of layout) {
       const k = assemblyKinds(a), I = a.i + 7, J = a.j + 7;
       for (let li = 0; li < n; li++) for (let lj = 0; lj < n; lj++) {
-        const q = (I * n + li) * NX + J * n + lj;
+        const q = (PAD + I * n + li) * NX + PAD + J * n + lj;
         kindT[q] = k[li * n + lj];
         fuelT[q] = a.region;
       }
+    }
+    if (A.baffle) {
+      // Steel in every water cell within two cells of an assembly.
+      const near = (gx, gy) => {
+        for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
+          const x = gx + dx, y = gy + dy;
+          if (x >= 0 && y >= 0 && x < NX && y < NX && kindT[x * NX + y] !== CELL.WATER && kindT[x * NX + y] !== CELL.BAFFLE) return true;
+        }
+        return false;
+      };
+      for (let gx = 0; gx < NX; gx++) for (let gy = 0; gy < NX; gy++) if (kindT[gx * NX + gy] === CELL.WATER && near(gx, gy)) kindT[gx * NX + gy] = CELL.BAFFLE;
     }
   }
   const W = (NX * P) / 2; // half-width of the grid
@@ -785,7 +855,7 @@ function makePinCore(cfg) {
   };
 
   const sys = {
-    kind: 'reactor', design: 'ap1000', pins: true, fuel: 'U', enrichment: enrich[1] ?? enrich[0], moderator: 'water', lumps: false,
+    kind: 'reactor', design: cfg.design, spec: A, pins: true, banks, fuel: 'U', enrichment: enrich[1] ?? enrich[0], moderator: 'water', lumps: false,
     boron, hot, absorbers, infinite, rods: cfg.rods ?? 0, a: A.pelletR, pitch: P, R: A.equivalentR, R2: Rb, H: A.H, zb, rodXY: [], rodR: 0,
     mats, fuelMat: mats[PIN_REG.FUEL1], modMat: water, refMat: null, fuelRegions: FUEL_REGIONS, layout, kT,
     setRods(x) { sys.rods = x; zb = sys.zb = H2 - A.H * x; },
@@ -796,6 +866,7 @@ function makePinCore(cfg) {
       }
       const { q, cx, cy } = cellOf(p[0], p[1]);
       if (q < 0 || kindT[q] === CELL.WATER) return PIN_REG.WATER;
+      if (kindT[q] === CELL.BAFFLE) return PIN_REG.BAFFLE;
       const rr = (p[0] - cx) ** 2 + (p[1] - cy) ** 2;
       for (const [r2, reg] of rings(kindT[q], fuelT[q], p[2])) if (rr < r2) return reg;
       return PIN_REG.WATER;
@@ -822,7 +893,7 @@ function makePinCore(cfg) {
       if (d[0] > 0) t = Math.min(t, (cx + P / 2 - p[0]) / d[0]); else if (d[0] < 0) t = Math.min(t, (cx - P / 2 - p[0]) / d[0]);
       if (d[1] > 0) t = Math.min(t, (cy + P / 2 - p[1]) / d[1]); else if (d[1] < 0) t = Math.min(t, (cy - P / 2 - p[1]) / d[1]);
       const kind = kindT[q];
-      if (kind === CELL.WATER) return t;
+      if (kind === CELL.WATER || kind === CELL.BAFFLE) return t;
       // Its rings, and the planes where they change.
       if (!infinite) for (const z0 of zPlanes(kind)) if (Math.abs(z0) < H2) plane(z0);
       if (a2 > 1e-12) {
@@ -865,6 +936,10 @@ function makePinCore(cfg) {
         const gx = Math.floor(q / NX), gy = q % NX;
         rodlets.push((gx - NX / 2 + 0.5) * P, (gy - NX / 2 + 0.5) * P, kind === CELL.BLACK ? 1 : kind === CELL.GRAY_AIC ? 2 : 3);
       }
+    }
+    // Clusters of banks that stay withdrawn, parked above the core (4).
+    if (banks) for (const a of layout) if (a.control && a.bank && !banks.includes(a.bank)) {
+      GUIDE_TUBES.forEach(([gi, gj]) => rodlets.push((a.i * n + gi - (n - 1) / 2) * P, (a.j * n + gj - (n - 1) / 2) * P, 4));
     }
     const pelletVol = Math.PI * A.pelletR ** 2 * A.H;
     sys.lumpCount = pins;

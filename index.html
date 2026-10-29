@@ -239,9 +239,16 @@
                   <button data-value="cold">Cold (68 °F)</button>
                 </div>
               </div>
+              <div class="control" id="chain-banks-wrap">
+                <span class="control-label">Rods that move</span>
+                <div class="segmented" id="chain-banks">
+                  <button data-value="all" class="on">All banks</button>
+                  <button data-value="D">Bank D only</button>
+                </div>
+              </div>
               <label class="control">
                 <span class="control-label">Burnable absorbers</span>
-                <span><input id="chain-ba" type="checkbox" checked> <span class="muted">first-core glass rods and coated fuel</span></span>
+                <span><input id="chain-ba" type="checkbox" checked> <span class="muted" id="chain-ba-note">first-core glass rods and coated fuel</span></span>
               </label>
             </div>
             <div class="control">

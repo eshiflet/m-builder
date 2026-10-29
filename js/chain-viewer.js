@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { nextEvent, collide, speed, rng, pointInFuel, FISSION_MEV, DELAYED, AP1000 } from './chain.js';
+import { nextEvent, collide, speed, rng, pointInFuel, FISSION_MEV, DELAYED } from './chain.js';
 
 const CAP = 1200; // tracked neutrons; above this, half are dropped and the rest count double
 const SEGMENTS = 9000; // finished track segments kept for the fading trails
@@ -294,7 +294,7 @@ export class ChainViewer {
     this.rodlets = null;
     this.pwr.visible = !!sys.pins;
     if (!sys.pins) return;
-    const A = AP1000, side = A.assemblyPitch - 0.6, m = new THREE.Matrix4(), c = new THREE.Color();
+    const A = sys.spec, side = A.assemblyPitch - 0.6, m = new THREE.Matrix4(), c = new THREE.Color();
     const boxes = new THREE.InstancedMesh(new THREE.BoxGeometry(side, side, A.H), this.assemblyMat, sys.layout.length);
     sys.layout.forEach((a, k) => {
       boxes.setMatrixAt(k, m.makeTranslation(a.i * A.assemblyPitch, a.j * A.assemblyPitch, 0));
@@ -304,7 +304,7 @@ export class ChainViewer {
     // Rodlets drawn thicker than life (they're 9 mm across) so they show at this scale.
     const n = sys.rodlets.length / 3;
     const rods = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.7, 0.7, 1, 6).rotateX(Math.PI / 2), this.rodletMat, n);
-    for (let k = 0; k < n; k++) rods.setColorAt(k, c.set(sys.rodlets[3 * k + 2] === 1 ? ROD_COLOR : sys.rodlets[3 * k + 2] === 2 ? '#7a808c' : '#a9b0bb'));
+    for (let k = 0; k < n; k++) rods.setColorAt(k, c.set(sys.rodlets[3 * k + 2] === 2 ? '#7a808c' : sys.rodlets[3 * k + 2] === 3 ? '#a9b0bb' : ROD_COLOR));
     this.rodlets = rods;
     this.pwr.add(boxes, barrel, rods);
   }
@@ -317,7 +317,12 @@ export class ChainViewer {
     if (sys.pins && this.rodlets) {
       // Rodlets run from their tips up to the drive's top, well above the core.
       const top = sys.H / 2 + 90, h = Math.max(1e-3, top - sys.zb), m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, h), v = new THREE.Vector3();
-      for (let k = 0; k < sys.rodlets.length / 3; k++) this.rodlets.setMatrixAt(k, m.compose(v.set(sys.rodlets[3 * k], sys.rodlets[3 * k + 1], sys.zb + h / 2), q, sc));
+      // Banks that aren't moving stay parked with their tips at the top of the fuel.
+      const hp = top - sys.H / 2, sp = new THREE.Vector3(1, 1, hp);
+      for (let k = 0; k < sys.rodlets.length / 3; k++) {
+        const parked = sys.rodlets[3 * k + 2] === 4;
+        this.rodlets.setMatrixAt(k, m.compose(v.set(sys.rodlets[3 * k], sys.rodlets[3 * k + 1], parked ? sys.H / 2 + hp / 2 : sys.zb + h / 2), q, parked ? sp : sc));
+      }
       this.rodlets.instanceMatrix.needsUpdate = true;
       return;
     }

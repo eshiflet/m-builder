@@ -366,6 +366,27 @@ Which assemblies hold rod clusters and burnable absorbers is a symmetric
 reconstruction that matches the published counts. The 69 clusters come out
 worth about 10–11%, against the design's 12.7%.
 
+*Sequoyah* (a reactor-core preset): TVA's Sequoyah Nuclear Plant near
+Chattanooga, two Westinghouse four-loop PWRs, rod by rod. The core has 193
+assemblies of 17×17 fuel (50,952 fuel rods), 12 ft of active fuel, and a
+steel baffle round it. Its 53 silver–indium–cadmium rod clusters sit at the
+positions and in the banks (A–D, SA–SD) that TVA gave the NRC in 2019.
+**Rods that move** switches between all banks and bank D only; bank D is the
+bank operators bring the reactor critical on. Sequoyah now runs on
+part-burned fuel, which needs burn-up to model. So the fuel is a fresh first
+core: that of its identical twin, Watts Bar Unit 1 (2.11%, 2.62% and 3.10%,
+with 1,712 borosilicate-glass absorber rods), as ORNL published it in the VERA
+benchmark along with the measured startup physics. Against those
+measurements:
+
+- With the rods out at 1,291 ppm, k = 1.010 ± 0.002, so critical boron comes
+  out near 1,375 ppm (measured 1,291).
+- Bank D is worth 1,305 ± 300 pcm (measured 1,342).
+- The boron worth is about −9 pcm/ppm (measured −10.8).
+
+The panel shows the statistical uncertainty on the critical boron and rod
+worths, which comes from separate Monte Carlo runs.
+
 In both systems a bar at the top of the view shows the **neutrons produced**
 so far (by fission, delayed emission and (n,2n), not counting the source), the
 **production rate** per second, and the **trend**: speeding up, steady or
@@ -474,7 +495,7 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 - `js/nucleus-viewer.js`: nucleon dynamics (mean field, NN force, thermostat) and the three.js nucleus and nucleon scenes
 - `js/reactions.js`: compound-nucleus reactions (Coulomb tunneling, photoabsorption, level densities, decay widths, cascades, fission splits)
 - `js/bombard.js`: turns one collision into animation stages, captions, real timings, odds, energy budget and products
-- `js/chain.js`: neutron transport for chain reactions (cross sections, resonances with Doppler broadening, delayed neutrons, ball, reactor-lattice and AP1000 rod-by-rod geometry, k and four factors by power iteration, critical size, point kinetics)
+- `js/chain.js`: neutron transport for chain reactions (cross sections, resonances with Doppler broadening, delayed neutrons, ball, reactor-lattice and rod-by-rod PWR geometry (AP1000, Sequoyah), k and four factors by power iteration, critical size, point kinetics)
 - `js/chain-worker.js`: computes k and the critical size off the main thread (the page runs several at once, one task each)
 - `js/chain-viewer.js`: the 3D chain-reaction scene and live simulation
 - `js/chain-ui.js`: chain-reaction controls and readout
