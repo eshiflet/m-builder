@@ -406,12 +406,14 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     }
     const p = kin.period;
     el.innerHTML = `<ul class="chain-facts">
-      <li>Power: <b>${powerText(kin.P ?? 0)}</b> <span class="muted">(${sci((kin.P ?? 0) / (FISSION_MEV * MEV_J), 2)} fissions per second)</span></li>
+      <li>Power: <b>${powerText(kin.P ?? kin.P0)}</b> <span class="muted">(${sci((kin.P ?? kin.P0) / (FISSION_MEV * MEV_J), 2)} fissions per second)</span></li>
       <li>Period: <b>${!isFinite(p) || Math.abs(p) > 3600 ? 'steady' : `${p > 0 ? 'rising' : 'falling'}, ×e every ${Math.abs(p) < 1 ? `${(Math.abs(p) * 1000).toFixed(0)} ms` : `${Math.abs(p).toFixed(0)} s`}`}</b></li>
-      <li>k = <b>${(kin.k ?? 0).toFixed(4)}</b> · rods ${(100 * rods.now).toFixed(1)}% in${kin.tripped ? ' · <b>SCRAMed</b>' : ''}</li>
+      <li>k = <b>${(kin.k ?? kNow()).toFixed(4)}</b> · rods ${(100 * rods.now).toFixed(1)}% in${kin.tripped ? ' · <b>SCRAMed</b>' : ''}</li>
       <li class="muted">Delayed-neutron precursors waiting: ${sci(kin.pk.C.reduce((a, b) => a + b, 0) + 1e-30, 2)}</li>
     </ul>`;
-    const h = kin.history, tMax = Math.max(10, h[h.length - 1][0]);
+    const h = kin.history;
+    if (!h.length) { $('#chain-kin-chart').innerHTML = ''; return; }
+    const tMax = Math.max(10, h[h.length - 1][0]);
     $('#chain-kin-chart').innerHTML = `${logChart(h.map(([t, P]) => [t, P]), { xMax: tMax, xLabel: (x) => `${x.toFixed(0)} s`, label: 'Reactor power over time', cls: 'kin' })}<p class="chart-note">Power in watts (log scale) against time.</p>`;
   }
 
