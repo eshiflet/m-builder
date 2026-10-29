@@ -631,3 +631,27 @@ ul.chain-facts li { margin: 2px 0; }
 .chip.scram:hover { background: color-mix(in srgb, #ff6b4d 18%, transparent); }
 p.four { font-variant-numeric: tabular-nums; font-size: 13px; margin: 4px 0; }
 .chain-chart.kin .curve { stroke: #ffd75e; }
+
+/* Chain reaction: neutron production readout at the top of the view */
+.chain-hud {
+  display: flex;
+  gap: 16px;
+  margin: 0 auto;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-2) 80%, transparent);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.chain-hud > div { display: flex; flex-direction: column; min-width: 0; }
+.chain-hud .muted { font-size: 11px; white-space: nowrap; }
+.chain-hud b { font-size: 14px; white-space: nowrap; }
+.chain-hud small { color: var(--muted); white-space: nowrap; }
+.chain-hud .trend.up b { color: #ff9a4d; }
+.chain-hud .trend.steady b { color: #7fd38a; }
+.chain-hud .trend.down b { color: #7fb2ff; }
+@media (max-width: 640px) {
+  .stage-top { flex-wrap: wrap; }
+  .chain-hud { order: 3; flex-basis: 100%; gap: 10px; justify-content: space-between; }
+}

@@ -1,4 +1,4 @@
-// Chain-reaction mode of the nucleus panel: the controls, the k prediction (from a worker),
+// Chain-reaction mode of the nucleus panel: the controls, the k prediction (from workers),
 // the live readout while neutrons multiply, and for a reactor core the seconds-long
 // "run the reactor" mode, where delayed neutrons and the control rods take over.
 
@@ -77,6 +77,18 @@ function rodFit(curve) {
   return (s) => k0 - W * f(s);
 }
 
+/**
+ * Critical radius of a reactor core with the rods out: one-group diffusion, k = k∞ / (1 + M²(π/R)²),
+ * with M² taken from this core's own k at radius R (so it also knows about the rod channels and
+ * the curved edge, and agrees with the k shown for this core). Null if it never goes critical.
+ */
+function coreCriticalRadius(kInf, k, R) {
+  if (kInf <= 1) return null;
+  const M2 = Math.max(1, ((kInf / k - 1) * R * R) / (Math.PI * Math.PI));
+  const Rc = (Math.PI * Math.sqrt(M2)) / Math.sqrt(kInf - 1);
+  return Rc < 2000 ? Rc : null;
+}
+
 export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   const viewer = new ChainViewer($('#nuc-chain'));
   let mode = 'ball';
@@ -91,7 +103,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   let pred = null; // worker results for the current configuration
   let stats = null;
   let shown = false;
-  let worker = null, jobId = 0, autoSpeed = true;
+  let workers = [], jobId = 0, autoSpeed = true;
   let kin = null; // the reactor running on point kinetics
   let kSpeed = 1;
   viewer.setSystem(sys);
@@ -104,21 +116,43 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
 
   const reactor = () => mode === 'reactor';
 
+  /**
+   * Start the worker tasks for this setup, all at once (each in its own worker). For a reactor
+   * the rods move freely afterwards, so k is worked out at three rod positions; rods out also
+   * gives the escape fractions, timings and fission sites.
+   */
   function predict() {
     pred = null;
     const id = ++jobId;
-    worker?.terminate();
-    worker = new Worker(new URL('./chain-worker.js', import.meta.url), { type: 'module' });
-    worker.onmessage = ({ data }) => {
-      if (data.id !== id) return;
-      pred = { ...pred, ...data };
-      if (data.k) {
-        if (autoSpeed) autoSetSpeed();
-        viewer.setSites(data.k.sites);
-      }
-      if (shown) { renderStatic(); renderButtons(); }
-    };
-    worker.postMessage({ id, cfg: { ...cfg } });
+    for (const w of workers) w.terminate();
+    const c = { ...cfg };
+    const tasks = reactor()
+      ? [['lattice', c], ['core', { ...c, rods: 0 }], ['core', { ...c, rods: 0.5 }], ['core', { ...c, rods: 1 }]]
+      : [['ball-k', c], ['ball-Rc', c]];
+    const rodK = new Map();
+    workers = tasks.map(([task, tc]) => {
+      const w = new Worker(new URL('./chain-worker.js', import.meta.url), { type: 'module' });
+      w.onmessage = ({ data }) => {
+        w.terminate();
+        if (data.id !== id) return;
+        const { task: t, rods: r, ...res } = data;
+        delete res.id;
+        if (t === 'core') {
+          rodK.set(r, res.k.k);
+          if (r !== 0) delete res.k; // only rods out gives the core's numbers
+          if (rodK.has(0)) res.rodCurve = [...rodK].sort((x, y) => x[0] - y[0]);
+        }
+        pred = { ...pred, ...res };
+        if (reactor() && pred.lattice && pred.k && pred.Rc === undefined) pred.Rc = coreCriticalRadius(pred.lattice.kInf, pred.k.k, c.R);
+        if (res.k) {
+          if (autoSpeed) autoSetSpeed();
+          viewer.setSites(res.k.sites);
+        }
+        if (shown) { renderStatic(); renderButtons(); }
+      };
+      w.postMessage({ id, task, cfg: tc });
+      return w;
+    });
   }
   let predictTimer = 0;
   const predictSoon = () => { clearTimeout(predictTimer); predictTimer = setTimeout(predict, 250); };
@@ -158,7 +192,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     stats = null;
     kin = {
       pk: new PointKinetics({ beta: pred.k.beta, Lambda: pred.k.genTime * 1e-9, nuclide: pred.k.dominant }),
-      history: [], period: Infinity, tripped: false, frames: 0, notes: new Set(),
+      history: [], period: Infinity, tripped: false, frames: 0, notes: new Set(), produced: 0,
     };
     const k = kNow();
     kin.pk.equilibrate((k - 1) / k);
@@ -203,7 +237,9 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     const k = kNow();
     const rho = (k - 1) / k;
     const pk = kin.pk;
+    const n0 = pk.n;
     pk.step(simDt, rho);
+    kin.produced += ((n0 + pk.n) / 2 / pk.Lambda) * simDt;
     const P = pk.fissionRate(NU) * FISSION_MEV * MEV_J;
     kin.history.push([pk.t, P, rods.now]);
     if (kin.history.length > 3000) kin.history = kin.history.filter((_, i) => i % 2 === 0);
@@ -297,12 +333,88 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   }
 
   function renderClock() {
+    renderHud();
     if (!shown) return;
     const clock = $('#nuc-clock');
     clock.hidden = false;
     if (kin) { clock.innerHTML = `t = ${kin.pk.t.toFixed(1)} s · ${kSpeed === 1 ? 'real time' : `${kSpeed}× real time`}`; return; }
     const T = stats?.T ?? 0;
     clock.innerHTML = `t = ${fmtTime(T)} · slowed ${sci(1e9 / viewer.speed, 1)}×${stats?.lagging ? ' · catching up' : ''}`;
+  }
+
+  // ---------- neutron-production readout (top of the view) ----------
+
+  let hudSamples = []; // [wall ms, T ns, produced, producedDrawn] from the running chain
+
+  /**
+   * Production rate (neutrons/s) over the latest stretch of the run, and whether it's rising or
+   * falling compared with the stretch before. A stretch is at least a second of watching, longer
+   * (up to four) until it holds 100 drawn neutrons; the trend counts only when the change is
+   * well beyond the counting noise (3σ), so random bunching doesn't read as a trend.
+   */
+  function productionTrend() {
+    const h = hudSamples;
+    const back = (end) => {
+      for (let i = end - 1; i >= 0; i--) {
+        const wall = h[end][0] - h[i][0];
+        if (wall >= 1000 && (h[end][3] - h[i][3] >= 100 || wall >= 4000)) return i;
+      }
+      return -1;
+    };
+    const rate = (a, b) => (h[b][2] - h[a][2]) / ((h[b][1] - h[a][1]) * 1e-9);
+    const last = h.length - 1, a = last > 0 ? back(last) : -1;
+    if (a < 0) return null;
+    const now = rate(a, last), b = back(a);
+    if (b < 0) return { now };
+    const before = rate(b, a);
+    const cNow = h[last][3] - h[a][3], cBefore = h[a][3] - h[b][3];
+    if (!cNow) return { now, alpha: -Infinity, trend: 'down' };
+    if (!cBefore) return { now, trend: 'up' };
+    // Growth rate α between the two stretches' midpoints: rate ∝ e^(αt).
+    const lr = Math.log(now / before), dt = ((h[last][1] - h[b][1]) / 2) * 1e-9;
+    const sigma = Math.sqrt(1 / cNow + 1 / cBefore);
+    const trend = lr > 3 * sigma && lr > 0.1 ? 'up' : lr < -3 * sigma && lr < -0.1 ? 'down' : 'steady';
+    return { now, alpha: lr / dt, trend };
+  }
+
+  function renderHud() {
+    const el = $('#chain-hud');
+    if (!shown) { el.hidden = true; return; }
+    let produced, rate, trend, alpha, secs; // alpha in 1/s
+    if (kin) {
+      produced = kin.produced;
+      rate = kin.pk.n / kin.pk.Lambda; // every neutron is born and dies once per generation time
+      // Growth rate over the last ten seconds of reactor time (power ∝ production rate).
+      const h = kin.history, last = h[h.length - 1];
+      const from = last && (h.find(([t]) => t >= last[0] - 10) ?? h[0]);
+      const a = last && last[0] > from[0] && from[1] > 0 ? Math.log(last[1] / from[1]) / (last[0] - from[0]) : 0;
+      alpha = Math.abs(a) > Math.LN2 / 3600 ? a : 0; // slower than doubling in an hour reads as steady
+      trend = alpha > 0 ? 'up' : alpha < 0 ? 'down' : 'steady';
+      secs = true;
+    } else {
+      if (!stats) { hudSamples = []; el.hidden = true; return; }
+      const prev = hudSamples[hudSamples.length - 1];
+      if (prev && (stats.T < prev[1] || stats.produced < prev[2])) hudSamples = [];
+      if (!prev || stats.T > prev[1]) hudSamples.push([performance.now(), stats.T, stats.produced, stats.producedDrawn]);
+      if (hudSamples.length > 600) hudSamples.splice(0, 300);
+      produced = stats.produced;
+      const t = productionTrend();
+      if (stats.done) { rate = 0; trend = stats.reason === 'died' ? 'died' : 'stopped'; }
+      else { rate = t?.now; trend = t?.trend; alpha = t?.alpha; }
+    }
+    const fmtT = (s) => (secs ? (s < 100 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : `${(s / 60).toFixed(0)} min`) : fmtTime(s * 1e9));
+    const TREND = {
+      up: ['▲', 'Speeding up', Number.isFinite(alpha) && alpha > 0 ? `doubling every ${fmtT(Math.LN2 / alpha)}` : ''],
+      steady: ['●', 'Steady', ''],
+      down: ['▼', 'Slowing down', Number.isFinite(alpha) && alpha < 0 ? `halving every ${fmtT(-Math.LN2 / alpha)}` : 'dying out'],
+      stopped: ['■', 'Stopped', ''],
+      died: ['■', 'Died out', 'no neutrons left'],
+    };
+    const [icon, word, detail] = TREND[trend] ?? ['…', 'Measuring', ''];
+    el.hidden = false;
+    el.innerHTML = `<div><span class="muted">Neutrons produced</span><b>${big(produced)}</b></div>
+      <div><span class="muted">Production rate</span><b>${rate == null ? '…' : `${sci(rate, 2)} /s`}</b></div>
+      <div class="trend ${trend === 'died' ? 'down' : trend ?? ''}"><span class="muted">Trend</span><b>${icon} ${word}</b>${detail ? `<small>${detail}</small>` : ''}</div>`;
   }
 
   /** How a multiplication factor behaves, given the delayed fraction β and the statistical error sd. */
@@ -539,7 +651,8 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
       $('#nuc-chain').hidden = !on;
       $('#nuc-chain-controls').hidden = !on;
       viewer.setActive(on && active);
-      if (on && !pred && !worker) predict();
+      renderHud();
+      if (on && !pred && !workers.length) predict();
     },
     setActive(on) { viewer.setActive(on && shown); },
     render,

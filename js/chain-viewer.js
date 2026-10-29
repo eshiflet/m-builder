@@ -349,6 +349,7 @@ export class ChainViewer {
       T: 0, W: 1, neutrons, gen: [count], genAlive: [count], fissions: 0, captures: 0, escapes: 0, born: count,
       fissionBy: {}, capturedBy: {}, peak: count, done: false, reason: null, milestones: new Set(), lagging: false, frames: 0,
       startCount: count, seed, firstFissionT: null, precursors: [], delayedMade: 0, delayedOut: 0,
+      produced: 0, producedDrawn: 0, // neutrons made in the core (fission, delayed and (n,2n)), not the source's
     };
     this.pickable = [];
     this.flashes.forEach((f) => { f.born = -1e9; f.s.visible = f.a.visible = f.b.visible = false; });
@@ -425,6 +426,7 @@ export class ChainViewer {
         if (q.tEmit > T) return true;
         run.genAlive[q.gen] = (run.genAlive[q.gen] ?? 0) + 1;
         run.delayedOut += run.W;
+        run.produced += run.W; run.producedDrawn++;
         list.push(this.#spawn({ p: q.p, d: q.d, E: q.E, region: q.region, gen: q.gen }, q.tEmit));
         if (!run.milestones.has('delayed')) { run.milestones.add('delayed'); this.onMilestone?.(`A <b>delayed neutron</b> appears ${fmtTime(q.tEmit)} in, from a fission fragment that β-decayed.`); }
         return false;
@@ -461,6 +463,7 @@ export class ChainViewer {
             run.gen[g] = (run.gen[g] ?? 0) + run.W * prompt.length;
             run.genAlive[g] = (run.genAlive[g] ?? 0) + prompt.length;
             run.born += run.W * prompt.length;
+            run.produced += run.W * prompt.length; run.producedDrawn += prompt.length;
             for (const o of prompt) list.push(this.#spawn({ ...o, gen: g }, t));
             for (const o of res.out) {
               if (!o.delayed) continue;
@@ -482,6 +485,7 @@ export class ChainViewer {
           run.genAlive[n.gen]++;
           run.gen[n.gen] += run.W;
           run.born += run.W;
+          run.produced += run.W; run.producedDrawn++;
           list.push(this.#spawn({ ...res.out[1], gen: n.gen }, t));
         }
       }
@@ -553,6 +557,7 @@ export class ChainViewer {
       gen: run.gen, kLive, done: run.done, reason: run.reason, lagging: run.lagging, energyMeV: run.fissions * FISSION_MEV,
       fissionBy: run.fissionBy, capturedBy: run.capturedBy, burn: run.fissions / this.sys.fissileAtoms,
       waiting: run.precursors.length * run.W, delayedOut: run.delayedOut,
+      produced: run.produced, producedDrawn: run.producedDrawn,
     });
   }
 

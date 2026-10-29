@@ -306,7 +306,7 @@ function sampleThermal(r) {
 
 // ---------- geometry ----------
 //
-// A system gives regionAt(p) → index into mats (or −1 outside) and boundary(p, d, region),
+// A system gives regionAt(p) → index into mats (or −1 outside) and boundary(p, d, region, cap),
 // the distance to the next surface. Neutrons fly straight between surfaces and collisions.
 
 const OUT = -1;
@@ -372,12 +372,24 @@ function makeReactor({ enrichment, moderator = 'graphite', lumps = true, a = 3, 
   let zb = R - 2 * R * rods; // rod tips
   const R2 = infinite ? Infinity : R;
   // A lump sits in every cell whose lump fits wholly inside the core and clear of the rod channels.
-  const lumpAt = (i, j, k) => {
+  const lumpFits = (i, j, k) => {
     const cx = (i + 0.5) * pitch, cy = (j + 0.5) * pitch, cz = (k + 0.5) * pitch;
-    if (!infinite && Math.sqrt(cx * cx + cy * cy + cz * cz) + a > R) return false;
+    if (Math.sqrt(cx * cx + cy * cy + cz * cz) + a > R) return false;
     for (const [x, y] of rodXY) if ((cx - x) ** 2 + (cy - y) ** 2 < (rodR + a) ** 2) return false;
     return true;
   };
+  // Looked up from a table of the cells, worked out once (every lattice cell holds one when infinite).
+  const half = infinite ? 0 : Math.ceil(R / pitch), side = 2 * half;
+  let lumpAt = lumpFits;
+  if (infinite) lumpAt = () => true;
+  else if (side ** 3 <= 8e6) {
+    const table = new Uint8Array(side ** 3);
+    for (let i = -half; i < half; i++) for (let j = -half; j < half; j++) for (let k = -half; k < half; k++) {
+      table[((i + half) * side + j + half) * side + k + half] = lumpFits(i, j, k) ? 1 : 0;
+    }
+    lumpAt = (i, j, k) => i >= -half && i < half && j >= -half && j < half && k >= -half && k < half
+      && table[((i + half) * side + j + half) * side + k + half] === 1;
+  }
   const inRod = (p) => {
     if (p[2] <= zb) return false;
     for (const [x, y] of rodXY) if ((p[0] - x) ** 2 + (p[1] - y) ** 2 < rodR * rodR) return true;
@@ -397,35 +409,46 @@ function makeReactor({ enrichment, moderator = 'graphite', lumps = true, a = 3, 
       const dx = p[0] - (i + 0.5) * pitch, dy = p[1] - (j + 0.5) * pitch, dz = p[2] - (k + 0.5) * pitch;
       return dx * dx + dy * dy + dz * dz < a * a ? 0 : 1;
     },
-    boundary(p, d, region) {
-      let t = Infinity;
-      if (!infinite) { const b = dot(p, d), c = dot(p, p) - R * R; t = -b + Math.sqrt(Math.max(0, b * b - c)); }
-      // Rods: their side walls (above the tip) and the tip's flat end.
-      for (const [x, y] of rodXY) {
-        const px = p[0] - x, py = p[1] - y, a2 = d[0] * d[0] + d[1] * d[1];
+    /**
+     * Distance to the next surface, or `cap` if none is nearer (the neutron collides first, so
+     * surfaces beyond it needn't be found). The lattice cell comes first: it's close, and it
+     * lets most rods be ruled out at a glance.
+     */
+    boundary(p, d, region, cap = Infinity) {
+      let t = cap;
+      if (!infinite) { const b = dot(p, d), c = dot(p, p) - R * R; t = Math.min(t, -b + Math.sqrt(Math.max(0, b * b - c))); }
+      if (lumps && region !== 2) {
+        const i = Math.floor(p[0] / pitch), j = Math.floor(p[1] / pitch), k = Math.floor(p[2] / pitch);
+        const qx = p[0] - (i + 0.5) * pitch, qy = p[1] - (j + 0.5) * pitch, qz = p[2] - (k + 0.5) * pitch;
+        const b = qx * d[0] + qy * d[1] + qz * d[2], c = qx * qx + qy * qy + qz * qz - a * a;
+        if (region === 0) t = Math.min(t, -b + Math.sqrt(Math.max(0, b * b - c)));
+        else {
+          if (b < 0 && b * b - c > 0 && lumpAt(i, j, k)) t = Math.min(t, -b - Math.sqrt(b * b - c));
+          // Leaving this lattice cell.
+          if (d[0] > 0) t = Math.min(t, ((i + 1) * pitch - p[0]) / d[0]); else if (d[0] < 0) t = Math.min(t, (i * pitch - p[0]) / d[0]);
+          if (d[1] > 0) t = Math.min(t, ((j + 1) * pitch - p[1]) / d[1]); else if (d[1] < 0) t = Math.min(t, (j * pitch - p[1]) / d[1]);
+          if (d[2] > 0) t = Math.min(t, ((k + 1) * pitch - p[2]) / d[2]); else if (d[2] < 0) t = Math.min(t, (k * pitch - p[2]) / d[2]);
+        }
+      }
+      // Rods: their side walls (above the tip) and the tip's flat end. A rod further off
+      // sideways than t + its radius can't be reached within t.
+      if (p[2] + Math.abs(d[2]) * t <= zb && region !== 2) return t; // below every rod tip all the way
+      const a2 = d[0] * d[0] + d[1] * d[1];
+      for (let n = 0; n < rodXY.length; n++) {
+        const px = p[0] - rodXY[n][0], py = p[1] - rodXY[n][1], reach = rodR + t;
+        if (px * px + py * py > reach * reach) continue;
         if (a2 > 1e-12) {
           const b2 = px * d[0] + py * d[1], disc = b2 * b2 - a2 * (px * px + py * py - rodR * rodR);
           if (disc > 0) {
-            const sq = Math.sqrt(disc);
-            for (const tt of [(-b2 - sq) / a2, (-b2 + sq) / a2]) if (tt > 1e-9 && tt < t && p[2] + d[2] * tt > zb) t = tt;
+            const sq = Math.sqrt(disc), t1 = (-b2 - sq) / a2, t2 = (-b2 + sq) / a2;
+            if (t1 > 1e-9 && t1 < t && p[2] + d[2] * t1 > zb) t = t1;
+            if (t2 > 1e-9 && t2 < t && p[2] + d[2] * t2 > zb) t = t2;
           }
         }
         if (d[2] !== 0) {
           const tt = (zb - p[2]) / d[2];
           if (tt > 1e-9 && tt < t && (px + d[0] * tt) ** 2 + (py + d[1] * tt) ** 2 < rodR * rodR) t = tt;
         }
-      }
-      if (!lumps || region === 2) return t;
-      const i = Math.floor(p[0] / pitch), j = Math.floor(p[1] / pitch), k = Math.floor(p[2] / pitch);
-      const q = [p[0] - (i + 0.5) * pitch, p[1] - (j + 0.5) * pitch, p[2] - (k + 0.5) * pitch];
-      const b = dot(q, d), c = dot(q, q) - a * a;
-      if (region === 0) return Math.min(t, -b + Math.sqrt(Math.max(0, b * b - c)));
-      if (b < 0 && b * b - c > 0 && lumpAt(i, j, k)) t = Math.min(t, -b - Math.sqrt(b * b - c));
-      // Leaving this lattice cell.
-      const cell = [i, j, k];
-      for (let ax = 0; ax < 3; ax++) {
-        if (d[ax] > 0) t = Math.min(t, ((cell[ax] + 1) * pitch - p[ax]) / d[ax]);
-        else if (d[ax] < 0) t = Math.min(t, (cell[ax] * pitch - p[ax]) / d[ax]);
       }
       return t;
     },
@@ -476,9 +499,9 @@ function makeReactor({ enrichment, moderator = 'graphite', lumps = true, a = 3, 
 export function nextEvent(sys, n, r) {
   const mat = sys.mats[n.region];
   if (!mat) return { kind: 'escape', s: 0, point: n.p };
-  const sb = sys.boundary(n.p, n.d, n.region);
   const st = -Math.log(r()) / macro(mat, n.E).tot;
-  if (st < sb) return { kind: 'collide', s: st, point: add(n.p, n.d, st) };
+  const sb = sys.boundary(n.p, n.d, n.region, st);
+  if (st <= sb) return { kind: 'collide', s: st, point: add(n.p, n.d, st) };
   const point = add(n.p, n.d, sb + 1e-6);
   const region = sys.regionAt(point);
   return { kind: region === OUT ? 'escape' : 'cross', s: sb, point, region };

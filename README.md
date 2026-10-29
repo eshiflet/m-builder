@@ -338,6 +338,14 @@ chart. The panel also says when the core is supercritical on delayed neutrons
 or prompt critical. **SCRAM** drops the rods; an automatic SCRAM trips on a
 period under 10 s or power above 10 MW.
 
+In both systems a bar at the top of the view shows the **neutrons produced**
+so far (by fission, delayed emission and (n,2n), not counting the source), the
+**production rate** per second, and the **trend**: speeding up, steady or
+slowing down, with the doubling or halving time. While watching neutrons the
+trend compares the last two stretches of the run and only calls a change once
+it is well beyond the counting noise; when running the reactor it comes from
+the last ten seconds of power.
+
 Both systems: every fission frees a measured fraction of delayed neutrons,
 which wait as orange precursor dots and appear seconds later. A Web Worker
 works out k and the critical size. The live readout shows neutrons in flight,
@@ -439,7 +447,7 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 - `js/reactions.js`: compound-nucleus reactions (Coulomb tunneling, photoabsorption, level densities, decay widths, cascades, fission splits)
 - `js/bombard.js`: turns one collision into animation stages, captions, real timings, odds, energy budget and products
 - `js/chain.js`: neutron transport for chain reactions (cross sections, ²³⁸U resonances, delayed neutrons, ball and reactor-lattice geometry, k and four factors by power iteration, critical size, point kinetics)
-- `js/chain-worker.js`: computes k and the critical size off the main thread
+- `js/chain-worker.js`: computes k and the critical size off the main thread (the page runs several at once, one task each)
 - `js/chain-viewer.js`: the 3D chain-reaction scene and live simulation
 - `js/chain-ui.js`: chain-reaction controls and readout
 - `js/nucleus-ui.js`: Nucleus mode controls and info
