@@ -612,3 +612,17 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .budget tr.head td { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 8px; }
 .products { list-style: none; margin: 0; padding: 0; font-size: 13px; display: grid; gap: 4px; }
 .products li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Chain reaction */
+.chain-controls { display: contents; }
+.chain-controls[hidden] { display: none; }
+#chain-thick-wrap { display: inline-flex; align-items: center; gap: 6px; }
+#chain-thick-wrap[hidden] { display: none; }
+.k-card { display: flex; align-items: center; gap: 12px; margin: 6px 0 8px; padding: 10px; border-radius: 8px; background: var(--panel-2); border-left: 4px solid var(--line); }
+.k-card .big { font-size: 20px; font-weight: 700; white-space: nowrap; }
+.k-card.sub { border-left-color: #4f9dff; }
+.k-card.crit { border-left-color: #ffd75e; }
+.k-card.super { border-left-color: #ff6b4d; }
+ul.chain-facts { margin: 4px 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+ul.chain-facts li { margin: 2px 0; }
+.chain-chart .curve { stroke: #ff8a4d; }

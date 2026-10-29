@@ -9,6 +9,7 @@ import { NuclideChart, MODE_COLORS, describeCell } from './nuclide-chart.js';
 import { nilssonDiagram, fillLevels, orbital, samplePoints, shellsFor, omegaText, MEASURED_SPIN } from './nilsson.js';
 import { bombard, BEAM_PRESETS, BEAM_DEFAULT, BEAM_RANGE, CHANNEL_NAMES, energyText as beamEnergyText, fateOf, canShow, nucHTML, pct } from './bombard.js';
 import { PROJECTILES } from './reactions.js';
+import { createChainUI } from './chain-ui.js';
 import { NucleusViewer, PROTON_COLOR, NEUTRON_COLOR, HALO_COLOR, PAIR_COLOR, PION_COLORS, COLOR_CHARGES } from './nucleus-viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -241,19 +242,21 @@ export function createNucleusUI({ onElementChange } = {}) {
   };
   viewer.onStats = (s) => { stats = s; renderStats(); };
   // Captions pile up in a log that stays until the reader closes it; new ones scroll into view.
-  viewer.onEventCaption = (text) => {
+  viewer.onEventCaption = (text) => addCaption(text);
+  function addCaption(text) {
     const log = $('#nuc-caption-log');
     if (!text || log.lastElementChild?.innerHTML === text) return;
     log.lastElementChild?.classList.remove('latest');
     log.insertAdjacentHTML('beforeend', `<p class="latest">${text}</p>`);
     $('#nuc-caption').hidden = false;
     log.scrollTop = log.scrollHeight;
-  };
+  }
   function clearCaptions() {
     $('#nuc-caption-log').innerHTML = '';
     $('#nuc-caption').hidden = true;
   }
   $('#nuc-caption-close').addEventListener('click', () => { $('#nuc-caption').hidden = true; });
+  const chainUI = createChainUI({ addCaption, clearCaptions, onOpenFission: openFission });
   viewer.onEventEnd = () => { if (eventInfo) { eventInfo.done = true; render(); } };
   viewer.onEventTime = (t, slow) => { physClock = { t, slow }; };
   viewer.onEventStage = (k) => {
@@ -368,6 +371,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     $('#nuc-spin-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
     $('#nuc-flow-wrap').hidden = mode !== 'rotation' || view !== 'nucleus';
     $('#nuc-clock').hidden = view !== 'nucleus';
+    $('#nuc-style-wrap').hidden = $('#nuc-rotate-wrap').hidden = view === 'chain';
     const ns = allowedNeutrons(iso.Z);
     $('#nuc-iso').innerHTML = isoLabel(iso);
     $('#nuc-iso-down').disabled = !ns.some((n) => n < iso.N);
@@ -383,6 +387,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     renderDecayButtons();
     $('#nuc-chart-wrap').hidden = view !== 'chart';
     if (view === 'chart') return renderChart();
+    if (view === 'chain') return chainUI.render();
     if (view === 'shell') return renderShell();
     if (view !== 'nucleus') return renderNucleon();
     if (eventInfo?.type === 'bombard') return renderBombard();
@@ -720,9 +725,10 @@ export function createNucleusUI({ onElementChange } = {}) {
   // ---------- chart of nuclides ----------
 
   function showChart(on) {
-    $('#nuc-canvas').hidden = on;
     $('#nuc-chart').hidden = !on;
-    viewer.setActive(active && !on);
+    $('#nuc-canvas').hidden = on || view === 'chain';
+    viewer.setActive(active && view !== 'chart' && view !== 'chain');
+    chainUI.show(view === 'chain', active);
     if (!on) return;
     if (!chart) {
       chart = new NuclideChart($('#nuc-chart'));
@@ -731,6 +737,15 @@ export function createNucleusUI({ onElementChange } = {}) {
     }
     chart.setSelected(iso.Z, iso.N);
     chartPick = chart.byKey.get(`${iso.Z},${iso.N}`) ?? null;
+  }
+
+  /** From the chain view: watch one neutron of energy E split nucleus (Z, A) up close. */
+  function openFission(Z, A, E) {
+    openInNucleus({ Z, A });
+    beam = 'n';
+    beamE.n = E;
+    renderBeam();
+    fire('fission');
   }
 
   function openInNucleus(cell) {
@@ -898,7 +913,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     view = b.dataset.value;
     document.querySelectorAll('#nuc-view button').forEach((x) => x.classList.toggle('on', x === b));
     showChart(view === 'chart');
-    if (view !== 'chart') viewer.setView(view === 'nucleus' ? 'nucleus' : view === 'shell' ? 'orbital' : 'nucleon', view);
+    if (view !== 'chart' && view !== 'chain') viewer.setView(view === 'nucleus' ? 'nucleus' : view === 'shell' ? 'orbital' : 'nucleon', view);
     if (view === 'shell') shellKey = ''; // refit to the orbital
     render();
   });
@@ -966,7 +981,7 @@ export function createNucleusUI({ onElementChange } = {}) {
     shellPick = g.dataset.line;
     render();
   });
-  $('#nuc-fit').addEventListener('click', () => (view === 'chart' ? chart?.fit() : viewer.fit()));
+  $('#nuc-fit').addEventListener('click', () => (view === 'chart' ? chart?.fit() : view === 'chain' ? chainUI.fit() : viewer.fit()));
   $('#nuc-chart-color').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -1029,7 +1044,7 @@ export function createNucleusUI({ onElementChange } = {}) {
 
   return {
     setElement,
-    setActive(on) { active = on; viewer.setActive(on && view !== 'chart'); },
+    setActive(on) { active = on; viewer.setActive(on && view !== 'chart' && view !== 'chain'); chainUI.setActive(on); },
     fit() { viewer.fit(); },
   };
 }

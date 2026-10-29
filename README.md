@@ -305,6 +305,25 @@ negative. **Binding energy** recolors by B/A, which peaks near iron. Scroll to
 zoom, drag to pan, click a square for details, and double-click to open that
 nucleus in 3D.
 
+**Chain reaction** (a View option) is a 3D ball of fuel, optionally inside a
+reflector. **▶ Start chain** sends in 1, 10 or 100 neutrons and follows each
+one with Monte Carlo neutron transport, in real centimetres and nanoseconds.
+Each neutron flies a random distance set by the cross sections, then scatters,
+is captured, or splits a nucleus, which frees 2–3 new neutrons. Fissions flash
+and turn their dot red, and trails show neutrons branching and leaking out
+through the surface. Controls: **Fuel** (uranium with any ²³⁵U share, or
+plutonium-239), **Fuel radius**, **Reflector** (natural uranium, beryllium or
+water, with a thickness), playback speed in simulated nanoseconds per second
+(**Auto** aims for one generation every 2.5 s), and a cutaway. A Web Worker
+works out k and the critical size for the current setup. The panel shows that
+prediction, a live readout (neutrons in flight, fissions, energy in joules and
+TNT, measured k) and a log chart of neutrons per generation. Click a flash to
+watch that fission in the nucleus view. The cross sections are energy-averaged
+evaluated values. With them, the Godiva, Jezebel and Flattop benchmark critical
+experiments come out within 2% of k = 1. Above 1,200 neutrons in flight, half
+are dropped at random and the rest count double (Russian roulette). Not
+modeled yet: delayed neutrons, moderated reactors, control rods, and heating.
+
 **Quarks** shows three quarks inside every nucleon, with gluon lines and color
 charges that keep swapping. **Inside a proton / neutron** zooms into one
 nucleon: valence quarks (uud or udd) with their charges, wiggling gluon flux
@@ -394,5 +413,9 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 - `js/nucleus-viewer.js`: nucleon dynamics (mean field, NN force, thermostat) and the three.js nucleus and nucleon scenes
 - `js/reactions.js`: compound-nucleus reactions (Coulomb tunneling, photoabsorption, level densities, decay widths, cascades, fission splits)
 - `js/bombard.js`: turns one collision into animation stages, captions, real timings, odds, energy budget and products
+- `js/chain.js`: neutron transport for chain reactions (cross sections, fission spectrum, scattering kinematics, k by power iteration, critical radius)
+- `js/chain-worker.js`: computes k and the critical size off the main thread
+- `js/chain-viewer.js`: the 3D chain-reaction scene and live simulation
+- `js/chain-ui.js`: chain-reaction controls and readout
 - `js/nucleus-ui.js`: Nucleus mode controls and info
 - `js/main.js`: UI wiring and mode switching

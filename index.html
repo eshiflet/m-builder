@@ -121,6 +121,7 @@
       <div class="stage">
         <div id="nuc-canvas" class="canvas"></div>
         <div id="nuc-chart" class="canvas" hidden></div>
+        <div id="nuc-chain" class="canvas" hidden></div>
         <div id="nuc-caption" class="stage-caption caption-box" hidden>
           <button id="nuc-caption-close" class="caption-close" title="Close" aria-label="Close captions">×</button>
           <div id="nuc-caption-log" class="caption-log" aria-live="polite"></div>
@@ -144,6 +145,57 @@
             <button data-value="neutron">Inside a neutron</button>
             <button data-value="shell">Shell model</button>
             <button data-value="chart">Chart of nuclides</button>
+            <button data-value="chain">Chain reaction</button>
+          </div>
+        </div>
+        <div id="nuc-chain-controls" class="chain-controls" hidden>
+          <div class="control">
+            <span class="control-label">Fuel</span>
+            <div class="segmented" id="chain-fuel">
+              <button data-value="U" class="on">Uranium</button>
+              <button data-value="Pu">Plutonium-239</button>
+            </div>
+          </div>
+          <div class="control" id="chain-enrich-wrap">
+            <span class="control-label">²³⁵U share</span>
+            <input id="chain-enrich" type="range" min="-0.143" max="2" step="0.001" aria-label="Enrichment in uranium-235">
+            <span id="chain-enrich-value" class="iso-value"></span>
+            <div id="chain-enrich-presets" class="examples"></div>
+          </div>
+          <label class="control">
+            <span class="control-label">Fuel radius</span>
+            <input id="chain-radius" type="range" min="1" max="40" step="0.1" aria-label="Radius of the fuel ball">
+            <span id="chain-radius-value" class="iso-value"></span>
+          </label>
+          <div class="control">
+            <span class="control-label">Reflector</span>
+            <div class="segmented" id="chain-ref">
+              <button data-value="none" class="on">None</button>
+              <button data-value="natU">Natural uranium</button>
+              <button data-value="Be">Beryllium</button>
+              <button data-value="water">Water</button>
+            </div>
+            <span id="chain-thick-wrap"><input id="chain-thick" type="range" min="1" max="30" step="1" aria-label="Reflector thickness"> <span id="chain-thick-value" class="iso-value"></span></span>
+          </div>
+          <div class="control">
+            <span class="control-label">Start with</span>
+            <div class="segmented small" id="chain-count">
+              <button data-value="1" class="on">1 neutron</button>
+              <button data-value="10">10</button>
+              <button data-value="100">100</button>
+            </div>
+            <button id="chain-start" class="chip fire">▶ Start chain</button>
+            <button id="chain-pause" class="chip" disabled>❚❚ Pause</button>
+          </div>
+          <div class="control">
+            <span class="control-label">Playback</span>
+            <input id="chain-speed" type="range" min="-1" max="5" step="0.01" aria-label="Simulated time per second">
+            <span id="chain-speed-value" class="iso-value"></span>
+            <button id="chain-speed-auto" class="chip" title="About one generation every 2.5 seconds">Auto</button>
+          </div>
+          <div class="control">
+            <label class="toggle"><input id="chain-cut" type="checkbox"> Cut away the front half</label>
+            <label class="toggle"><input id="chain-rotate" type="checkbox" checked> Rotate view</label>
           </div>
         </div>
         <div class="control" id="nuc-chart-wrap" hidden>
@@ -228,7 +280,7 @@
           <input id="nuc-rate" type="range" min="0" max="100" step="1" value="25">
           <span id="nuc-rate-value" class="iso-value"></span>
         </label>
-        <div class="control">
+        <div class="control" id="nuc-style-wrap">
           <span class="control-label">Style</span>
           <div class="segmented" id="nuc-style">
             <button data-value="glow" class="on">Glow</button>
@@ -244,7 +296,7 @@
         <label class="toggle" id="nuc-motion-wrap"><input id="nuc-motion" type="checkbox" checked> Nucleon motion</label>
         <label class="toggle" id="nuc-quarks-wrap"><input id="nuc-quarks" type="checkbox"> Quarks</label>
         <label class="toggle" id="nuc-mesons-wrap" title="Show pions carrying the strong force between nucleons"><input id="nuc-mesons" type="checkbox"> Mesons</label>
-        <label class="toggle"><input id="nuc-rotate" type="checkbox" checked> Rotate view</label>
+        <label class="toggle" id="nuc-rotate-wrap"><input id="nuc-rotate" type="checkbox" checked> Rotate view</label>
       </div>
 
       <div id="nuc-info" class="info"></div>
