@@ -2,8 +2,8 @@
 // the live readout while neutrons multiply, and for a reactor core the seconds-long
 // "run the reactor" mode, where delayed neutrons and the control rods take over.
 
-import { makeSystem, MEV_J, TNT_TON_J, FISSION_MEV, PointKinetics } from './chain.js';
-import { ChainViewer, NUCLIDE_COLORS, REFLECTOR_COLORS, MODERATOR_COLORS, SPENT_COLOR, PRECURSOR_COLOR, ROD_COLOR, uraniumColor, fmtTime } from './chain-viewer.js';
+import { makeSystem, MEV_J, TNT_TON_J, FISSION_MEV, PointKinetics, AP1000 } from './chain.js';
+import { ChainViewer, NUCLIDE_COLORS, REFLECTOR_COLORS, MODERATOR_COLORS, SPENT_COLOR, PRECURSOR_COLOR, ROD_COLOR, uraniumColor, pwrFuelColor, fmtTime } from './chain-viewer.js';
 import { sci } from './nucleus-data.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -12,9 +12,10 @@ const NUCLIDE_Z = { U235: [92, 235], U238: [92, 238], Pu239: [94, 239] };
 const NAME = { U235: 'uranium-235', U238: 'uranium-238', Pu239: 'plutonium-239' };
 const MOD_NAME = { graphite: 'graphite', water: 'water', heavy: 'heavy water' };
 const REACTOR_PRESETS = {
-  cp1: { label: 'CP-1, Chicago 1942', cfg: { enrichment: 0.0072, moderator: 'graphite', lumps: true, a: 3.0, pitch: 21, R: 420 } },
-  water: { label: 'Water-cooled (4% fuel)', cfg: { enrichment: 0.04, moderator: 'water', lumps: true, a: 0.59, pitch: 1.5, R: 26 } },
-  heavy: { label: 'Heavy water, natural uranium', cfg: { enrichment: 0.0072, moderator: 'heavy', lumps: true, a: 3.8, pitch: 20, R: 130 } },
+  cp1: { label: 'CP-1, Chicago 1942', cfg: { design: null, enrichment: 0.0072, moderator: 'graphite', lumps: true, a: 3.0, pitch: 21, R: 420 } },
+  water: { label: 'Water-cooled (4% fuel)', cfg: { design: null, enrichment: 0.04, moderator: 'water', lumps: true, a: 0.59, pitch: 1.5, R: 26 } },
+  heavy: { label: 'Heavy water, natural uranium', cfg: { design: null, enrichment: 0.0072, moderator: 'heavy', lumps: true, a: 3.8, pitch: 20, R: 130 } },
+  ap1000: { label: 'AP1000 (Westinghouse PWR)', cfg: { design: 'ap1000', boron: AP1000.criticalBoronHot, hot: true, absorbers: true } },
 };
 const ROD_SPEED = 0.02; // fraction of full travel per second, as real rod drives move
 const SCRAM_SPEED = 1.0; // a SCRAM drops the rods in about a second
@@ -115,6 +116,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   viewer.onFrame = (dt) => tickKinetics(dt);
 
   const reactor = () => mode === 'reactor';
+  const pwr = () => reactor() && cfg.design === 'ap1000';
 
   /**
    * Start the worker tasks for this setup, all at once (each in its own worker). For a reactor
@@ -143,7 +145,10 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
           if (rodK.has(0)) res.rodCurve = [...rodK].sort((x, y) => x[0] - y[0]);
         }
         pred = { ...pred, ...res };
-        if (reactor() && pred.lattice && pred.k && pred.Rc === undefined) pred.Rc = coreCriticalRadius(pred.lattice.kInf, pred.k.k, c.R);
+        if (c.design === 'ap1000') {
+          // Critical boron, to first order: each ppm removes (the share of neutrons boron absorbs) ÷ ppm of ln k.
+          if (pred.k && pred.critBoron === undefined) pred.critBoron = pred.k.boron > 0 ? c.boron + Math.log(pred.k.k) / (pred.k.boron / c.boron) : null;
+        } else if (reactor() && pred.lattice && pred.k && pred.Rc === undefined) pred.Rc = coreCriticalRadius(pred.lattice.kInf, pred.k.k, c.R);
         if (res.k) {
           if (autoSpeed) autoSetSpeed();
           viewer.setSites(res.k.sites);
@@ -198,7 +203,9 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     kin.pk.equilibrate((k - 1) / k);
     kin.P0 = kin.pk.fissionRate(NU) * FISSION_MEV * MEV_J;
     clearCaptions();
-    addCaption(`The reactor starts with the rods ${Math.round(100 * rods.now)}% in and a neutron source of 10⁵ neutrons per second. Drag <b>Control rods</b> to pull them out slowly; they move at ${Math.round(100 * ROD_SPEED)}% of their travel per second.`);
+    addCaption(pwr()
+      ? `The reactor starts with the rods ${Math.round(100 * rods.now)}% in and a neutron source of 10⁵ neutrons per second. The rods move at their drives’ top speed, 45 inches a minute, so a full pull takes about four minutes (try 10×). At ${Math.round(cfg.boron)} ppm boron the core is critical with the rods ${pred?.critBoron != null && pred.critBoron < cfg.boron ? 'never quite out: lower the boron' : 'nearly all the way out'}. Real startups go in steps, waiting at each for the power to settle; pull too fast and the automatic SCRAM trips on the rising power.`
+      : `The reactor starts with the rods ${Math.round(100 * rods.now)}% in and a neutron source of 10⁵ neutrons per second. Drag <b>Control rods</b> to pull them out slowly; they move at ${Math.round(100 * ROD_SPEED)}% of their travel per second.`);
     renderButtons();
     renderStatic();
   }
@@ -222,7 +229,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
 
   function moveRods(dt) {
     if (rods.now === rods.target) { rods.scram = false; return false; }
-    const v = (rods.scram ? SCRAM_SPEED : ROD_SPEED) * dt;
+    const v = (rods.scram ? SCRAM_SPEED : pwr() ? AP1000.rodSpeed / AP1000.H : ROD_SPEED) * dt;
     rods.now = rods.target > rods.now ? Math.min(rods.target, rods.now + v) : Math.max(rods.target, rods.now - v);
     viewer.setRods(rods.now);
     return true;
@@ -271,7 +278,9 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     $('#chain-reactor-controls').hidden = $('#chain-reactor-controls-2').hidden = !r;
     const u = cfg.fuel === 'U';
     document.querySelectorAll('#chain-fuel button').forEach((b) => b.classList.toggle('on', b.dataset.value === cfg.fuel));
-    $('#chain-enrich-wrap').hidden = !u;
+    $('#chain-enrich-wrap').hidden = !u || pwr();
+    document.querySelectorAll('.lattice-only').forEach((el) => { el.hidden = pwr(); });
+    $('#chain-pwr-controls').hidden = !pwr();
     $('#chain-enrich').value = Math.log10(100 * cfg.enrichment);
     $('#chain-enrich-value').textContent = pctText(cfg.enrichment);
     $('#chain-enrich-presets').innerHTML = ENRICH_PRESETS.map(([n, e]) => `<button class="chip${Math.abs(e - cfg.enrichment) < 1e-4 ? ' on' : ''}" data-enrich="${e}">${n}</button>`).join('');
@@ -282,6 +291,13 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
       }).join('');
       document.querySelectorAll('#chain-mod button').forEach((b) => b.classList.toggle('on', b.dataset.value === cfg.moderator));
       document.querySelectorAll('#chain-layout button').forEach((b) => b.classList.toggle('on', (b.dataset.value === 'lumps') === cfg.lumps));
+      if (pwr()) {
+        $('#chain-boron').value = cfg.boron;
+        $('#chain-boron-value').textContent = `${Math.round(cfg.boron)} ppm`;
+        document.querySelectorAll('#chain-temp button').forEach((b) => b.classList.toggle('on', (b.dataset.value === 'hot') === cfg.hot));
+        $('#chain-ba').checked = cfg.absorbers;
+        renderRods();
+      } else {
       $('#chain-lump').value = Math.log10(cfg.a);
       $('#chain-lump-value').textContent = `${sys.a.toFixed(sys.a < 1 ? 2 : 1)} cm`;
       $('#chain-pitch').value = Math.log10(cfg.pitch);
@@ -289,6 +305,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
       $('#chain-core').value = Math.log10(cfg.R);
       $('#chain-core-value').textContent = `${cfg.R.toFixed(cfg.R < 20 ? 1 : 0)} cm · ${tons(sys.mass)} of uranium${cfg.lumps ? ` in ${sys.lumpCount.toLocaleString()} lumps` : ''}`;
       renderRods();
+      }
     } else {
       $('#chain-radius').value = cfg.R;
       $('#chain-radius-value').textContent = `${cfg.R.toFixed(1)} cm · ${kg(sys.mass)} kg`;
@@ -301,18 +318,21 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     document.querySelectorAll('#chain-kspeed button').forEach((b) => b.classList.toggle('on', +b.dataset.value === kSpeed));
     renderButtons();
 
-    $('#nuc-title').innerHTML = r
+    $('#nuc-title').innerHTML = pwr()
+      ? `<span><strong>AP1000 core</strong><br><span class="muted">${tons(sys.mass)} of uranium in ${sys.lumpCount.toLocaleString()} fuel rods · ${Math.round(cfg.boron)} ppm boron · ${cfg.hot ? 'hot' : 'cold'}</span></span>`
+      : r
       ? `<span><strong>Reactor core</strong><br><span class="muted">${tons(sys.mass)} of uranium (${pctText(cfg.enrichment)} ²³⁵U) ${cfg.lumps ? 'in lumps' : 'mixed'} in ${MOD_NAME[cfg.moderator]}</span></span>`
       : `<span><strong>Chain reaction</strong><br><span class="muted">${kg(sys.mass)} kg of ${u ? `uranium (${pctText(cfg.enrichment)} ²³⁵U)` : 'plutonium-239'}${sys.refMat ? ` in ${cfg.T.toFixed(0)} cm of ${sys.refMat.name.toLowerCase()}` : ', bare'}</span></span>`;
     const fuelKeys = sys.fuelMat.parts.map((p) => p.key);
     $('#nuc-legend').innerHTML = [
-      ...(r ? [`<span><i style="background:#${uraniumColor(cfg.enrichment).getHexString()}"></i>uranium</span>`, `<span><i style="background:${MODERATOR_COLORS[cfg.moderator]}"></i>${MOD_NAME[cfg.moderator]}</span>`, `<span><i style="background:${ROD_COLOR};outline:1px solid #888"></i>control rod</span>`]
+      ...(pwr() ? [...AP1000.enrich.map((e) => `<span><i style="background:#${pwrFuelColor(e).getHexString()}"></i>${pctText(e)} fuel</span>`), `<span><i style="background:${MODERATOR_COLORS.water}"></i>water</span>`, `<span><i style="background:${ROD_COLOR};outline:1px solid #888"></i>black rods</span>`, '<span><i style="background:#7a808c"></i>gray rods</span>']
+        : r ? [`<span><i style="background:#${uraniumColor(cfg.enrichment).getHexString()}"></i>uranium</span>`, `<span><i style="background:${MODERATOR_COLORS[cfg.moderator]}"></i>${MOD_NAME[cfg.moderator]}</span>`, `<span><i style="background:${ROD_COLOR};outline:1px solid #888"></i>control rod</span>`]
         : [...fuelKeys.map((k) => `<span><i style="background:${NUCLIDE_COLORS[k]}"></i>${NAME[k]}</span>`), `<span><i style="background:${SPENT_COLOR}"></i>split</span>`,
           sys.refMat ? `<span><i style="background:${REFLECTOR_COLORS[cfg.reflector]}"></i>${sys.refMat.name.toLowerCase()}</span>` : '']),
       '<span><i style="background:#f2f8ff"></i>fast neutron</span><span><i style="background:#4073ff"></i>slow neutron</span>',
       `<span><i style="background:${PRECURSOR_COLOR}"></i>delayed-neutron precursor</span>`,
     ].join('');
-    $('#nuc-scale').textContent = r ? `core radius ${cfg.R < 100 ? `${cfg.R.toFixed(0)} cm` : `${(cfg.R / 100).toFixed(2)} m`}` : `fuel radius ${cfg.R.toFixed(1)} cm`;
+    $('#nuc-scale').textContent = pwr() ? `core ${(2 * AP1000.equivalentR / 100).toFixed(2)} m across, ${(AP1000.H / 100).toFixed(2)} m tall` : r ? `core radius ${cfg.R < 100 ? `${cfg.R.toFixed(0)} cm` : `${(cfg.R / 100).toFixed(2)} m`}` : `fuel radius ${cfg.R.toFixed(1)} cm`;
     renderClock();
     renderStatic();
   }
@@ -368,6 +388,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     if (b < 0) return { now };
     const before = rate(b, a);
     const cNow = h[last][3] - h[a][3], cBefore = h[a][3] - h[b][3];
+    if (cNow + cBefore < 20) return { now }; // too few to tell
     if (!cNow) return { now, alpha: -Infinity, trend: 'down' };
     if (!cBefore) return { now, trend: 'up' };
     // Growth rate α between the two stretches' midpoints: rate ∝ e^(αt).
@@ -464,7 +485,54 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     renderLive();
   }
 
+  /** The AP1000: one assembly as a lattice, then the whole core, compared with the published design. */
+  function renderPwr() {
+    const L = pred?.lattice, k = pred?.k, f = L?.fourFactor, A = AP1000;
+    const latticeHTML = !L ? '<p class="muted">Working out one assembly, repeated forever…</p>' : `
+      <div class="k-card ${L.kInf > 1 ? 'crit' : 'sub'}"><div class="big">k∞ = ${L.kInf.toFixed(3)}</div><div>A ${pctText(A.enrich[1])} assembly, rods out, ${Math.round(cfg.boron)} ppm boron, repeated forever.</div></div>
+      ${f ? `<p class="four">k∞ = η × f × p × ε = ${f.eta.toFixed(3)} × ${f.f.toFixed(3)} × ${f.p.toFixed(3)} × ${f.eps.toFixed(3)}</p>
+      <ul class="chain-facts">
+        <li><b>η = ${f.eta.toFixed(2)}</b>: neutrons made per thermal neutron the fuel absorbs.</li>
+        <li><b>f = ${f.f.toFixed(2)}</b>: share of thermal neutrons the fuel gets, rather than the water, its boron and the cladding.</li>
+        <li><b>p = ${f.p.toFixed(2)}</b>: share that slow down past ²³⁸U’s resonances. Water slows neutrons in a few centimetres, so thin rods close together work.</li>
+        <li><b>ε = ${f.eps.toFixed(2)}</b>: extra from fissions before reaching thermal energy (in a PWR, a good share are in ²³⁵U’s resonances).</li>
+      </ul>` : ''}
+      <p class="muted" style="font-size:12px">Each assembly: 264 fuel rods 9.5 mm across, 12.6 mm apart, with 24 guide tubes for control or absorber rods and a central instrument tube.</p>`;
+    const kn = kNow();
+    let coreHTML = '<p class="muted">Working out k for this core…</p>';
+    if (k && kn != null) {
+      const worth = pred.rodCurve?.length === 3 ? Math.log(pred.rodCurve[0][1] / pred.rodCurve[2][1]) : null;
+      const cb = pred.critBoron;
+      const pub = cfg.hot
+        ? `Westinghouse’s design: hot, rods out, burnable absorbers in: critical at <b>${A.criticalBoronHot} ppm</b>.`
+        : `Westinghouse’s design: cold, rods out: k = 0.99 at <b>${A.criticalBoronCold099} ppm</b>.`;
+      coreHTML = `<div id="chain-know">${kCardHTML(kn)}</div>
+        <ul class="chain-facts">
+          <li>With the rods out, of every 100 neutrons born: <b>${Math.round(100 * k.fission)}</b> cause a fission, <b>${Math.round(100 * k.capture)}</b> are captured (<b>${Math.round(100 * k.boron)}</b> by the boron), <b>${Math.round(100 * k.escape)}</b> escape.</li>
+          <li>Prompt neutron lifetime: <b>${fmtTime(k.genTime)}</b> (design: ${(A.lifetime * 1e6).toFixed(1)} µs) · delayed neutrons β = <b>${(100 * k.beta).toFixed(2)}%</b></li>
+          ${worth != null ? `<li>All 69 rod clusters are worth <b>${(100 * worth).toFixed(1)}%</b> in reactivity (${(worth / k.beta).toFixed(0)} dollars; design: ${(100 * A.allRodsWorth).toFixed(1)}%).</li>` : '<li class="muted">Working out what the rods are worth…</li>'}
+          ${cb === undefined ? '' : cb == null ? '' : `<li>Critical with the rods out at about <b>${Math.max(0, Math.round(cb / 10) * 10)} ppm</b> boron <button class="chip" data-chain-critical>Set the boron there</button></li>`}
+          <li class="muted">${pub}${cfg.absorbers ? '' : ' (Without the burnable absorbers, more boron is needed.)'}</li>
+        </ul>`;
+    }
+    $('#nuc-info').innerHTML = `<div class="info-head"><div><h2>AP1000 pressurized-water reactor</h2>
+      <div class="muted">Westinghouse’s 1,100-megawatt design, running at Vogtle in Georgia and at Sanmen and Haiyang in China: 157 fuel assemblies in a core 3 m across and 4.3 m tall, in water at 2,250 psi.</div></div></div>
+      <div class="beam-grid">
+        <div><h3>One fuel assembly</h3>${latticeHTML}</div>
+        <div><h3>The whole core</h3>${coreHTML}</div>
+      </div>
+      <div class="beam-grid">
+        <div><h3>Running the reactor (seconds)</h3><div id="chain-kin"></div><div id="chain-kin-chart"></div></div>
+        <div><h3>Watching the neutrons (microseconds)</h3><div id="chain-live"></div><div id="chain-chart"></div></div>
+      </div>
+      <p class="explain">A PWR controls its chain three ways. <b>Boron dissolved in the water</b> (as boric acid) evens out slow changes: the plant dilutes it month by month as the fuel burns. <b>Burnable absorbers</b> in fresh fuel soak up neutrons early on and burn away as the fuel does. <b>Rod clusters</b> handle fast changes: 53 “black” clusters of 24 silver–indium–cadmium rodlets, and 16 “gray” ones with half the absorber, used to follow the load. Here all 69 move together at the real drives’ top speed of 45 inches a minute, so a full pull takes about four minutes. The water is also the moderator: its hydrogen slows the neutrons, and boron in it catches some of them, so each ppm of boron takes away about 0.008% of k.</p>
+      <p class="note">How it’s modeled: every fuel rod (UO₂ pellet, helium gap, zirconium-alloy cladding), guide tube, rodlet and burnable absorber of the first core, in borated water inside the core barrel, from Westinghouse’s Design Control Document (Rev. 19). Hot zero power is 557 °F, water at 0.743 g/cm³, with ²³⁸U’s resonances Doppler-broadened and thermal neutrons in a Maxwell spread at that temperature. Checked against ORNL’s VERA benchmark for this fuel (a fuel-rod cell, an assembly, and an assembly with 24 Ag–In–Cd rods), all within 0.4%; at 1,382 ppm the whole core comes out at k = 1.000 ± 0.005, as published. Reconstructed, not published: which assemblies hold the rod clusters and burnable absorbers (symmetric, matching the published counts), so the rods come out worth less than the design’s 12.7%. The gap between assemblies is shared out among the rod cells; spacer grids, nozzles and the steel core shroud are left out (water instead). Not modeled: power and its temperature feedback, xenon, and burn-up.</p>`;
+    renderLive();
+    renderKinetics();
+  }
+
   function renderReactor() {
+    if (pwr()) return renderPwr();
     const L = pred?.lattice, k = pred?.k;
     const f = L?.fourFactor;
     const latticeHTML = !L ? '<p class="muted">Working out the lattice (an infinitely large core of it)…</p>' : `
@@ -600,6 +668,14 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     cfg.lumps = b.dataset.value === 'lumps';
     rebuild();
   });
+  $('#chain-boron').addEventListener('input', (e) => { cfg.boron = +e.target.value; rebuild(); });
+  $('#chain-temp').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    cfg.hot = b.dataset.value === 'hot';
+    rebuild();
+  });
+  $('#chain-ba').addEventListener('change', (e) => { cfg.absorbers = e.target.checked; rebuild(); });
   $('#chain-lump').addEventListener('input', (e) => { cfg.a = 10 ** +e.target.value; rebuild(); });
   $('#chain-pitch').addEventListener('input', (e) => { cfg.pitch = 10 ** +e.target.value; rebuild(); });
   $('#chain-core').addEventListener('input', (e) => { cfg.R = 10 ** +e.target.value; rebuild(); });
@@ -636,7 +712,14 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   $('#chain-cut').addEventListener('change', (e) => viewer.setCutaway(e.target.checked));
   $('#chain-rotate').addEventListener('change', (e) => viewer.setAutoRotate(e.target.checked));
   $('#nuc-info').addEventListener('click', (e) => {
-    if (!shown || !e.target.closest('[data-chain-critical]') || !pred?.Rc) return;
+    if (!shown || !e.target.closest('[data-chain-critical]')) return;
+    if (pwr()) {
+      if (pred?.critBoron == null) return;
+      cfg.boron = Math.max(0, Math.round(pred.critBoron / 10) * 10);
+      rebuild();
+      return;
+    }
+    if (!pred?.Rc) return;
     // A reactor gets a little margin over critical, for the rods to hold down.
     cfg.R = reactor() ? Math.round(pred.Rc * 1.06 * 10) / 10 : Math.round(pred.Rc * 10) / 10;
     rebuild();

@@ -162,7 +162,7 @@
               <span class="control-label">Start from</span>
               <div id="chain-presets" class="examples"></div>
             </div>
-            <div class="control">
+            <div class="control lattice-only">
               <span class="control-label">Moderator</span>
               <div class="segmented" id="chain-mod">
                 <button data-value="graphite" class="on">Graphite</button>
@@ -204,28 +204,46 @@
             </div>
           </div>
           <div id="chain-reactor-controls-2" class="chain-controls" hidden>
-            <div class="control">
+            <div class="control lattice-only">
               <span class="control-label">Fuel</span>
               <div class="segmented" id="chain-layout">
                 <button data-value="lumps" class="on">Lumps</button>
                 <button data-value="mixed">Mixed evenly</button>
               </div>
             </div>
-            <label class="control">
+            <label class="control lattice-only">
               <span class="control-label">Lump radius</span>
               <input id="chain-lump" type="range" min="-0.7" max="1" step="0.005" aria-label="Radius of each fuel lump">
               <span id="chain-lump-value" class="iso-value"></span>
             </label>
-            <label class="control">
+            <label class="control lattice-only">
               <span class="control-label">Lump spacing</span>
               <input id="chain-pitch" type="range" min="-0.3" max="1.7" step="0.005" aria-label="Distance between fuel lumps">
               <span id="chain-pitch-value" class="iso-value"></span>
             </label>
-            <label class="control">
+            <label class="control lattice-only">
               <span class="control-label">Core radius</span>
               <input id="chain-core" type="range" min="0.7" max="2.85" step="0.002" aria-label="Radius of the reactor core">
               <span id="chain-core-value" class="iso-value"></span>
             </label>
+            <div id="chain-pwr-controls" class="chain-controls" hidden>
+              <label class="control">
+                <span class="control-label">Boron in the water</span>
+                <input id="chain-boron" type="range" min="0" max="2700" step="10" aria-label="Soluble boron concentration">
+                <span id="chain-boron-value" class="iso-value"></span>
+              </label>
+              <div class="control">
+                <span class="control-label">Temperature</span>
+                <div class="segmented" id="chain-temp">
+                  <button data-value="hot" class="on">Hot, zero power (557 °F)</button>
+                  <button data-value="cold">Cold (68 °F)</button>
+                </div>
+              </div>
+              <label class="control">
+                <span class="control-label">Burnable absorbers</span>
+                <span><input id="chain-ba" type="checkbox" checked> <span class="muted">first-core glass rods and coated fuel</span></span>
+              </label>
+            </div>
             <div class="control">
               <span class="control-label">Control rods</span>
               <input id="chain-rods" type="range" min="0" max="100" step="0.1" value="100" aria-label="Control rod insertion">

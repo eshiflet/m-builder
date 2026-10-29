@@ -13,6 +13,7 @@ export const MEV_J = 1.602177e-13;
 export const FISSION_MEV = 200; // recoverable energy per fission
 export const TNT_TON_J = 4.184e9;
 export const KT_ROOM = 2.53e-8; // MeV: thermal neutrons at 20 °C
+export const K_BOLTZMANN = 8.617e-11; // MeV per kelvin
 export const E_THERMAL = 6.25e-7; // MeV: below the cadmium cutoff (0.625 eV) a neutron counts as thermal
 
 // Energy grid (MeV): thermal, 1 eV … 20 MeV.
@@ -29,8 +30,10 @@ export const DELAYED = {
 export const NUCLIDES = {
   U235: {
     A: 235, label: '²³⁵U', molar: 235.04,
-    f: [585, 93, 30, 12, 5, 2.6, 1.65, 1.19, 1.26, 1.29, 1.32, 1.06, 1.75, 2.1],
-    c: [99, 16, 15, 6, 2.5, 1.0, 0.45, 0.17, 0.11, 0.08, 0.06, 0.03, 0.01, 0.005],
+    // Thermal fission falls a little faster than 1/v (Westcott g = 0.976 at 20 °C, ≈0.94 in a hot
+    // PWR), and the resonances from 1 eV to 1 keV capture about half as often as they fission.
+    f: [585, 75.6, 30, 12, 5, 2.6, 1.65, 1.19, 1.26, 1.29, 1.32, 1.06, 1.75, 2.1],
+    c: [99, 13.2, 35, 12, 3.5, 1.0, 0.45, 0.17, 0.11, 0.08, 0.06, 0.03, 0.01, 0.005],
     el: [15, 14, 12, 12, 11, 11, 9.6, 5.6, 4.2, 4.1, 4.0, 3.9, 2.8, 2.8],
     inel: [0, 0, 0, 0, 0, 0, 0.05, 0.8, 1.1, 1.3, 1.35, 1.75, 1.2, 0.6],
     n2n: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.8, 0.4], n2nQ: 5.3,
@@ -93,6 +96,61 @@ export const NUCLIDES = {
     c: [0.005, 8e-4, 2.5e-4, 8e-5, 2.5e-5, 8e-6, 3e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6],
     el: [5.0, 5.0, 5.0, 5.0, 5.0, 4.9, 4.6, 3.0, 2.2, 1.8, 1.6, 1.3, 1.1, 1.0],
   },
+  // Power-reactor structure: zirconium alloy for fuel cladding (ZIRLO, Zircaloy), and stainless
+  // steel (type 304, as one averaged nucleus: 70% Fe, 19% Cr, 10% Ni) for control-rod cladding.
+  Zr: {
+    A: 91, label: 'Zr', molar: 91.224,
+    c: [0.185, 0.03, 0.03, 0.2, 0.2, 0.05, 0.015, 0.006, 0.005, 0.004, 0.003, 0.002, 0.001, 0.001],
+    el: [6.2, 6.3, 6.3, 6.4, 6.5, 7.0, 8.0, 7.0, 5.0, 4.5, 4.2, 3.9, 3.8, 3.8],
+    inel: [0, 0, 0, 0, 0, 0, 0, 0, 0.1, 0.4, 0.9, 1.5, 1.0, 0.5],
+    n2n: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.4, 1.0], n2nQ: 7.2,
+  },
+  SS: {
+    A: 55, label: 'steel', molar: 55.4,
+    c: [2.9, 0.47, 0.15, 0.1, 0.05, 0.05, 0.01, 0.005, 0.004, 0.003, 0.003, 0.002, 0.001, 0.001],
+    el: [10.5, 10.5, 10.5, 10.5, 10.5, 9.0, 4.0, 3.5, 3.0, 2.8, 2.7, 2.4, 2.3, 2.2],
+    inel: [0, 0, 0, 0, 0, 0, 0, 0.2, 0.5, 1.0, 1.3, 1.4, 1.0, 0.5],
+  },
+  Si28: {
+    A: 28, label: '²⁸Si', molar: 28.086,
+    c: [0.17, 0.027, 0.009, 0.003, 0.001, 3e-4, 1e-4, 1e-3, 2e-3, 2e-3, 2e-3, 2e-3, 1e-3, 1e-3],
+    el: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 2.5, 2.2, 1.5, 1.2, 1.0],
+    inel: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.3, 0.7, 0.5, 0.3],
+  },
+  // Silver–indium–cadmium (the absorber in most PWR control rods). Each has a few huge capture
+  // resonances below 20 eV, drawn individually (energy, neutron and radiation widths in eV, spin
+  // factor g); the tables hold the rest (the 1/v tail of resonances below zero energy, and the
+  // smaller resonances above, averaged).
+  Ag107: {
+    A: 107, label: '¹⁰⁷Ag', molar: 106.905,
+    c: [35, 5.6, 1.8, 1.5, 0.8, 0.5, 0.25, 0.1, 0.07, 0.05, 0.04, 0.02, 0.005, 0.002],
+    el: [7, 6, 6, 6, 6, 7, 6.5, 5, 4, 4, 3.8, 3.8, 3, 3],
+    inel: [0, 0, 0, 0, 0, 0, 0.3, 1.2, 1.7, 2.0, 2.1, 2.2, 1.5, 0.8],
+    lines: [{ E: 16.30, gn: 0.0061, gg: 0.13, g: 0.75 }],
+  },
+  Ag109: {
+    A: 109, label: '¹⁰⁹Ag', molar: 108.905,
+    c: [1, 0.16, 0.05, 2.0, 1.0, 0.6, 0.3, 0.1, 0.07, 0.05, 0.04, 0.02, 0.005, 0.002],
+    el: [5, 5, 5, 6, 6, 7, 6.5, 5, 4, 4, 3.8, 3.8, 3, 3],
+    inel: [0, 0, 0, 0, 0, 0, 0.3, 1.2, 1.7, 2.0, 2.1, 2.2, 1.5, 0.8],
+    lines: [{ E: 5.19, gn: 0.0127, gg: 0.137, g: 0.75 }],
+  },
+  In115: {
+    A: 115, label: '¹¹⁵In', molar: 114.904,
+    c: [1, 0.16, 15, 2.0, 1.0, 0.6, 0.3, 0.15, 0.1, 0.07, 0.05, 0.02, 0.005, 0.002],
+    el: [2.5, 2.5, 3, 4, 5, 6, 6.5, 5, 4, 4, 3.8, 3.8, 3, 3],
+    inel: [0, 0, 0, 0, 0, 0, 0.3, 1.2, 1.7, 2.0, 2.1, 2.2, 1.5, 0.8],
+    lines: [{ E: 1.457, gn: 0.0030, gg: 0.072, g: 0.55 }],
+  },
+  // Natural cadmium: ¹¹³Cd (12.2% of it) has a resonance at 0.178 eV that makes cadmium nearly
+  // black to thermal neutrons and transparent above ~0.5 eV.
+  Cd: {
+    A: 112, label: 'Cd', molar: 112.41,
+    c: [7, 1.1, 0.4, 0.5, 0.3, 0.2, 0.1, 0.06, 0.05, 0.04, 0.03, 0.02, 0.005, 0.002],
+    el: [5.5, 5.5, 5.5, 5.5, 6, 6.5, 6.5, 5, 4, 4, 3.8, 3.8, 3, 3],
+    inel: [0, 0, 0, 0, 0, 0, 0.3, 1.0, 1.5, 1.8, 2.0, 2.2, 1.5, 0.8],
+    lines: [{ E: 0.178, gn: 0.00065, gg: 0.1135, g: 0.75, scale: 0.122 }],
+  },
 };
 
 // ---------- ²³⁸U resolved resonances ----------
@@ -106,41 +164,77 @@ const U238_MEASURED = [
   [145.7, 0.86], [165.3, 3.1], [189.7, 173], [208.5, 51], [237.4, 27.9], [273.7, 25.6], [291.0, 16],
 ];
 const RES_MAX_EV = 4000;
-const U238_RES = (() => {
+const U238_LINES = (() => {
   const r = rng(238);
-  const list = U238_MEASURED.map(([E, gn]) => ({ E, gn: gn / 1000 }));
+  const list = U238_MEASURED.map(([E, gn]) => ({ E, gn: gn / 1000, gg: 0.023 }));
   let E = 300;
   while (E < RES_MAX_EV) {
     E += 20.9 * Math.sqrt(-(4 / Math.PI) * Math.log(r())); // Wigner distribution of spacings
     const g = Math.sqrt(-2 * Math.log(r())) * Math.cos(2 * Math.PI * r()); // Porter–Thomas: Γn ∝ (Gaussian)²
-    list.push({ E, gn: 1.0e-4 * 20.9 * Math.sqrt(E) * g * g });
-  }
-  const A = 238, kT = KT_ROOM * 1e6; // eV
-  for (const res of list) {
-    const gg = 0.023, G = res.gn + gg;
-    res.peak = (2.608e6 / res.E) * ((A + 1) / A) ** 2 * (res.gn / G); // σ₀ = 4πƛ²·g·Γn/Γ (g = 1)
-    res.cap = gg / G; res.G = G;
-    // Pseudo-Voigt (Thompson–Cox–Hastings) mix of the natural (Lorentzian) and Doppler (Gaussian) shapes.
-    const fG = 2 * Math.sqrt(Math.LN2) * Math.sqrt((4 * res.E * kT) / A), fL = G;
-    const f = (fG ** 5 + 2.69269 * fG ** 4 * fL + 2.42843 * fG ** 3 * fL ** 2 + 4.47163 * fG ** 2 * fL ** 3 + 0.07842 * fG * fL ** 4 + fL ** 5) ** 0.2;
-    const q = fL / f;
-    res.f = f; res.eta = 1.36603 * q - 0.47719 * q * q + 0.11116 * q * q * q;
+    list.push({ E, gn: 1.0e-4 * 20.9 * Math.sqrt(E) * g * g, gg: 0.023 });
   }
   return list;
 })();
 
-/** Resonance capture and scattering of ²³⁸U at E (MeV), in barns. */
-function u238Resonances(E) {
+/**
+ * Resonance lines ready to evaluate at temperature kT (MeV): peak cross section, capture share and
+ * a pseudo-Voigt (Thompson–Cox–Hastings) mix of the natural (Lorentzian) and Doppler (Gaussian)
+ * shapes. Worked out once per temperature.
+ */
+const broadenedCache = new Map();
+function broadened(lines, A, kT) {
+  let byT = broadenedCache.get(lines);
+  if (!byT) broadenedCache.set(lines, (byT = new Map()));
+  let out = byT.get(kT);
+  if (out) return out;
+  const kTeV = kT * 1e6;
+  out = lines.map((line) => {
+    const res = { ...line }, G = res.gn + res.gg;
+    res.peak = (2.608e6 / res.E) * ((A + 1) / A) ** 2 * (((res.g ?? 1) * res.gn) / G) * (res.scale ?? 1); // σ₀ = 4πƛ²·g·Γn/Γ
+    res.cap = res.gg / G; res.G = G;
+    const fG = 2 * Math.sqrt(Math.LN2) * Math.sqrt((4 * res.E * kTeV) / A), fL = G;
+    const f = (fG ** 5 + 2.69269 * fG ** 4 * fL + 2.42843 * fG ** 3 * fL ** 2 + 4.47163 * fG ** 2 * fL ** 3 + 0.07842 * fG * fL ** 4 + fL ** 5) ** 0.2;
+    const q = fL / f;
+    res.f = f; res.eta = 1.36603 * q - 0.47719 * q * q + 0.11116 * q * q * q;
+    return res;
+  });
+  byT.set(kT, out);
+  return out;
+}
+
+/** One broadened line's cross section at e (eV), before the capture/scatter split. */
+function lineShape(res, e) {
+  const x = e - res.E, f = res.f;
+  const L = (f / (2 * Math.PI)) / (x * x + (f * f) / 4);
+  const G = ((2 * Math.sqrt(Math.LN2)) / (f * Math.sqrt(Math.PI))) * Math.exp((-4 * Math.LN2 * x * x) / (f * f));
+  return res.peak * ((Math.PI * res.G) / 2) * (res.eta * L + (1 - res.eta) * G);
+}
+
+/** Resonance capture and scattering of ²³⁸U at E (MeV), in barns, at temperature kT. */
+function u238Resonances(E, kT) {
+  const U238_RES = broadened(U238_LINES, 238, kT);
   const e = E * 1e6;
   let lo = 0, hi = U238_RES.length - 1;
   while (hi - lo > 1) { const m = (lo + hi) >> 1; if (U238_RES[m].E < e) lo = m; else hi = m; }
   let c = 0, s = 0;
   for (let i = Math.max(0, lo - 6); i <= Math.min(U238_RES.length - 1, hi + 6); i++) {
-    const res = U238_RES[i], x = e - res.E, f = res.f;
-    const L = (f / (2 * Math.PI)) / (x * x + (f * f) / 4);
-    const G = ((2 * Math.sqrt(Math.LN2)) / (f * Math.sqrt(Math.PI))) * Math.exp((-4 * Math.LN2 * x * x) / (f * f));
-    const shape = res.peak * ((Math.PI * res.G) / 2) * (res.eta * L + (1 - res.eta) * G);
+    const res = U238_RES[i], shape = lineShape(res, e);
     c += shape * res.cap;
+    s += shape * (1 - res.cap);
+  }
+  return { c, s };
+}
+
+/**
+ * A nuclide's own few resonance lines at E (MeV). Capture grows as 1/v below a line (the neutron
+ * width goes as √E), which is what gives ¹¹³Cd its huge thermal cross section.
+ */
+function lineSigmas(nuc, E, kT) {
+  const e = E * 1e6;
+  let c = 0, s = 0;
+  for (const res of broadened(nuc.lines, nuc.A, kT)) {
+    const shape = lineShape(res, e);
+    c += shape * res.cap * Math.sqrt(res.E / e);
     s += shape * (1 - res.cap);
   }
   return { c, s };
@@ -208,7 +302,7 @@ function interp(tab, E) {
 }
 
 /** All partial cross sections of a nuclide at E (barns). Elastic stays flat below thermal. */
-export function sigmas(nuc, E) {
+export function sigmas(nuc, E, kT = KT_ROOM) {
   const thermal = E <= GRID[0];
   const s = {
     f: interp(nuc.f, E), c: interp(nuc.c, E),
@@ -219,9 +313,14 @@ export function sigmas(nuc, E) {
   if (nuc === NUCLIDES.U238 && E > 1e-6 && E < RES_MAX_EV * 1e-6) {
     // Resolved range: a 1/v background (the bound levels' tail) plus the resonances, and
     // 9 b of potential scattering.
-    const res = u238Resonances(E);
+    const res = u238Resonances(E, kT);
     s.c = 2.68 * Math.sqrt(KT_ROOM / E) + res.c;
     s.el = 9.0 + res.s;
+  }
+  if (nuc.lines && E < 1e-3) {
+    const res = lineSigmas(nuc, E, kT);
+    s.c += res.c;
+    s.el += res.s;
   }
   return s;
 }
@@ -231,7 +330,7 @@ function macro(mat, E) {
   if (mat.cacheE === E) return mat.cache;
   let tot = 0;
   const parts = mat.parts.map((p) => {
-    const s = sigmas(p.nuc, E);
+    const s = sigmas(p.nuc, E, mat.kT);
     const t = p.N * (s.f + s.c + s.el + s.inel + s.n2n);
     tot += t;
     return { p, s, t };
@@ -298,10 +397,10 @@ function sampleHG(g, r) {
   return Math.max(-1, Math.min(1, (1 + g * g - t * t) / (2 * g)));
 }
 
-/** Room-temperature Maxwellian, for neutrons that have slowed to thermal. */
-function sampleThermal(r) {
+/** Maxwellian at temperature kT (room temperature unless the material is hotter), for neutrons that have slowed to thermal. */
+function sampleThermal(r, kT = KT_ROOM) {
   const c = Math.cos((Math.PI / 2) * r());
-  return KT_ROOM * (-Math.log(r()) - Math.log(r()) * c * c);
+  return kT * (-Math.log(r()) - Math.log(r()) * c * c);
 }
 
 // ---------- geometry ----------
@@ -319,7 +418,7 @@ function add(p, d, s) { return [p[0] + d[0] * s, p[1] + d[1] * s, p[2] + d[2] * 
  * Regions: 0 = fuel, 1 = reflector.
  */
 export function makeSystem(cfg) {
-  if (cfg.kind === 'reactor') return makeReactor(cfg);
+  if (cfg.kind === 'reactor') return cfg.design === 'ap1000' ? makePinCore(cfg) : makeReactor(cfg);
   const { fuel, enrichment, R, reflector = 'none', T = 0 } = cfg;
   const fuelMat = fuelMaterial(fuel, enrichment);
   const refMat = reflector !== 'none' && T > 0 ? REFLECTORS[reflector]() : null;
@@ -490,6 +589,294 @@ function makeReactor({ enrichment, moderator = 'graphite', lumps = true, a = 3, 
   return sys;
 }
 
+// ---------- a pressurized-water reactor, rod by rod: the AP1000 ----------
+//
+// Westinghouse AP1000, from its Design Control Document (Rev. 19, Tables 4.1-1, 4.3-1 and 4.3-2):
+// 157 fuel assemblies, each a 17 × 17 array of 264 UO₂ fuel rods in zirconium-alloy cladding,
+// 24 guide tubes and a central instrument tube; 14 ft of active fuel; three enrichments in the
+// first core (2.35%, 3.40% and 4.45%), the two lower in a checkerboard in the middle and the
+// highest round the edge. Reactivity is held down by boron dissolved in the water, by burnable
+// absorbers (1,558 borosilicate-glass rods in guide tubes and 8,832 fuel rods with a thin boride
+// coating, "IFBA") and by 69 rod clusters: 53 "black" ones of 24 silver–indium–cadmium rodlets
+// and 16 "gray" ones (12 thin Ag–In–Cd and 12 steel rodlets) for load following.
+
+export const AP1000 = {
+  assemblies: 157, assemblyPitch: 21.5, n: 17, H: 426.72, // 168 in of active fuel
+  pelletR: 0.4096, cladIR: 0.418, cladOR: 0.475, // 0.3225 in pellets in 0.374 in rods, 0.0225 in clad
+  guideIR: 0.561, guideOR: 0.602,
+  enrich: [0.0235, 0.034, 0.0445], // weight fraction of ²³⁵U, regions 1–3 of the first core
+  fuelDensity: 10.37, // 95.5% of theoretical, less the pellet dishes and chamfers
+  aicR: 0.433, rodCladR: 0.484, grayR: 0.203, grayCladR: 0.250, // 0.341 in and 0.160 in absorber
+  equivalentR: 152.0, barrelR: 169.9, reflector: 25, // core barrel ID 133.75 in; water above and below
+  pyrexLength: 368.3, ifbaLength: 386.1, // absorber lengths, 145 in and 152 in
+  rodSpeed: 1.905, // cm/s: rods move at most 45 in per minute
+  hot: { T: 565, water: 0.743 }, // hot zero power: 557 °F, 2250 psia
+  cold: { T: 293, water: 0.998 }, // 68 °F, 1 atm
+  // Published first-core values to compare with:
+  betaEff: 0.0075, lifetime: 19.8e-6, criticalBoronHot: 1382, criticalBoronCold099: 1574, allRodsWorth: 0.1269,
+};
+
+// Guide-tube positions in a 17 × 17 Westinghouse assembly (row, column), in groups of four
+// placed symmetrically, so the first 4, 8, 12 … make a symmetric set of burnable-absorber rods.
+const GUIDE_TUBES = [[3, 3], [3, 13], [13, 3], [13, 13], [2, 8], [8, 2], [8, 14], [14, 8], [5, 5], [5, 11], [11, 5], [11, 11],
+  [2, 5], [2, 11], [14, 5], [14, 11], [5, 2], [11, 2], [5, 14], [11, 14], [5, 8], [8, 5], [8, 11], [11, 8]];
+
+/**
+ * The first core's layout: the 157 assembly positions (i, j from the centre), each with its
+ * enrichment region (0–2), rod cluster (0 none, 1 black, 2 gray) and burnable absorbers.
+ * The map, the enrichment zoning and the 69 cluster sites follow the published description;
+ * which assemblies hold which burnable absorbers is a symmetric estimate that matches the
+ * published totals.
+ */
+export function ap1000Layout() {
+  const inMap = (i, j) => Math.hypot(i, j) <= 7 || (Math.abs(i) === 7 && Math.abs(j) === 1) || (Math.abs(j) === 7 && Math.abs(i) === 1);
+  const list = [];
+  for (let i = -7; i <= 7; i++) for (let j = -7; j <= 7; j++) if (inMap(i, j)) list.push({ i, j });
+  const edge = (i, j) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => !inMap(i + a, j + b));
+  const nearEdge = (i, j) => [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]].some(([a, b]) => inMap(i + a, j + b) && edge(i + a, j + b));
+  for (const a of list) {
+    const { i, j } = a, odd = Math.abs(i + j) % 2 === 1;
+    a.region = edge(i, j) || (nearEdge(i, j) && odd) ? 2 : odd ? 1 : 0;
+    // Clusters sit on every other assembly diagonally, except the outermost tips.
+    a.control = Math.abs(i % 2) === Math.abs(j % 2) && Math.abs(i) < 7 && Math.abs(j) < 7 ? 1 : 0;
+    const ai = Math.abs(i), aj = Math.abs(j);
+    if (a.control && ((ai === 2 && aj === 4) || (ai === 4 && aj === 2) || (ai === 1 && aj === 5) || (ai === 5 && aj === 1))) a.control = 2;
+    // Burnable absorbers in the more reactive assemblies (glass rods only where no cluster is).
+    const outer = edge(i, j);
+    a.pyrex = a.control ? 0 : a.region === 1 ? 24 : outer ? 12 : 16;
+    a.ifba = a.region === 1 ? 128 : a.region === 2 ? (outer ? 64 : 80) : 0;
+  }
+  return list;
+}
+
+const CELL = { WATER: 0, FUEL: 1, IFBA: 2, GUIDE: 3, BLACK: 4, GRAY_AIC: 5, GRAY_SS: 6, PYREX: 7, INSTRUMENT: 8 };
+const PIN_REG = { FUEL0: 0, WATER: 1, AIC: 2, ZR: 3, GAP: 4, FUEL1: 5, FUEL2: 6, SS: 7, GLASS: 8, IFBA: 9 };
+const FUEL_REGIONS = [PIN_REG.FUEL0, PIN_REG.FUEL1, PIN_REG.FUEL2];
+
+/** A material from atom densities (atoms per barn·cm). */
+function atomMaterial(name, density, parts) {
+  return { name, density, parts: parts.filter(([, N]) => N > 0).map(([key, N]) => ({ key, nuc: NUCLIDES[key], N })) };
+}
+
+/** Uranium dioxide with a weight fraction w of ²³⁵U. */
+function uo2(w, density) {
+  const a = w / 235.04 / (w / 235.04 + (1 - w) / 238.05);
+  return makeMaterial(`UO₂ (${pctText(w)} ²³⁵U)`, density, [['U235', a / 3], ['U238', (1 - a) / 3], ['O16', 2 / 3]]);
+}
+
+/** Water with ppm (by weight) of natural boron dissolved in it, as boric acid. */
+function boratedWater(density, ppm) {
+  const w = ppm * 1e-6, nW = ((density * (1 - w)) / 18.015) * AVOGADRO_B, nB = ((density * w) / 10.811) * AVOGADRO_B;
+  return atomMaterial(ppm > 0 ? `Water with ${Math.round(ppm)} ppm boron` : 'Water', density, [['H1', 2 * nW], ['O16', nW], ['B10', 0.199 * nB], ['B11', 0.801 * nB]]);
+}
+
+/** 80% silver, 15% indium, 5% cadmium by weight. */
+function agInCd() {
+  const rho = 10.16, n = (w, M) => ((rho * w) / M) * AVOGADRO_B;
+  return atomMaterial('Silver–indium–cadmium', rho, [['Ag107', 0.5184 * n(0.8, 107.87)], ['Ag109', 0.4816 * n(0.8, 107.87)], ['In115', n(0.15, 114.82)], ['Cd', n(0.05, 112.41)]]);
+}
+
+function besselJ0(x) {
+  let s = 0, term = 1;
+  for (let k = 0; k < 14; k++) { if (k) term *= -(x * x) / 4 / (k * k); s += term; }
+  return s;
+}
+
+/**
+ * The AP1000 core, every rod in it: fuel rods (pellet, helium gap, cladding), guide tubes with
+ * control rodlets or burnable-absorber rods, all in borated water, inside the core barrel with
+ * water above and below the fuel. Options: boron (ppm), hot (hot zero power, else cold), absorbers
+ * (the first core's burnable absorbers), rods (0 out … 1 in; all 69 clusters move together).
+ * `infinite` gives one kind of assembly repeated forever (lattice: 'assembly', the default, at
+ * enrichment index 1) or one fuel rod repeated (lattice: 'pin'); `insert: 'black'` puts a black
+ * rodlet in every guide tube (as in the VERA benchmark's rodded assembly).
+ */
+function makePinCore(cfg) {
+  const A = AP1000, { boron = 1382, hot = true, absorbers = true, infinite = false, lattice = 'assembly', insert = null } = cfg;
+  const state = hot ? A.hot : A.cold, kT = K_BOLTZMANN * (cfg.T ?? state.T);
+  const enrich = cfg.enrich ?? A.enrich;
+  const fuels = enrich.map((w) => uo2(w, cfg.fuelDensity ?? A.fuelDensity));
+  const water = boratedWater(cfg.waterDensity ?? state.water, boron);
+  const zr = makeMaterial('Zirconium alloy', 6.55, [['Zr', 1]]);
+  const gap = { name: 'Helium gap', density: 0, parts: [] };
+  const ss = makeMaterial('Stainless steel', 8.0, [['SS', 1]]);
+  const glass = atomMaterial('Borosilicate glass', 2.25, [['B10', 9.62e-4], ['B11', 3.87e-3], ['Si28', 0.01975], ['O16', 0.04675]]);
+  const ifba = atomMaterial('Boride coating', 3.85, [['B10', 0.01802], ['Zr', 0.009]]);
+  const mats = [fuels[0], water, agInCd(), zr, gap, fuels[1] ?? fuels[0], fuels[2] ?? fuels[0], ss, glass, ifba];
+  for (const m of mats) m.kT = kT;
+  const FUEL_OF = [PIN_REG.FUEL0, PIN_REG.FUEL1, PIN_REG.FUEL2];
+
+  // Rings round each cell's centre, inside out: [radius², region]; water beyond.
+  const ring = (list) => list.map(([r, reg]) => [r * r, reg]);
+  const fuelRings = FUEL_OF.map((f) => ring([[A.pelletR, f], [A.cladIR, PIN_REG.GAP], [A.cladOR, PIN_REG.ZR]]));
+  const ifbaRings = FUEL_OF.map((f) => ring([[A.pelletR, f], [A.pelletR + 0.001, PIN_REG.IFBA], [A.cladIR, PIN_REG.GAP], [A.cladOR, PIN_REG.ZR]]));
+  const tube = [[A.guideIR, PIN_REG.WATER], [A.guideOR, PIN_REG.ZR]];
+  const emptyTube = ring(tube);
+  const blackRings = ring([[A.aicR, PIN_REG.AIC], [A.rodCladR, PIN_REG.SS], ...tube]);
+  const grayAicRings = ring([[A.grayR, PIN_REG.AIC], [A.grayCladR, PIN_REG.SS], ...tube]);
+  const graySsRings = ring([[A.grayCladR, PIN_REG.SS], ...tube]);
+  const pyrexRings = ring([[0.214, PIN_REG.GAP], [0.231, PIN_REG.SS], [0.241, PIN_REG.GAP], [0.427, PIN_REG.GLASS], [0.437, PIN_REG.GAP], [0.484, PIN_REG.SS], ...tube]);
+  const H2 = A.H / 2, Z2 = H2 + A.reflector, Rb = A.barrelR;
+  let zb = H2 - A.H * (cfg.rods ?? 0);
+  const rodded = (kind) => kind === CELL.BLACK || kind === CELL.GRAY_AIC || kind === CELL.GRAY_SS;
+  /** The rings of a cell of this kind at height z. */
+  const rings = (kind, fr, z) => {
+    switch (kind) {
+      case CELL.FUEL: return fuelRings[fr];
+      case CELL.IFBA: return infinite || Math.abs(z) < A.ifbaLength / 2 ? ifbaRings[fr] : fuelRings[fr];
+      case CELL.BLACK: return infinite || z > zb ? blackRings : emptyTube;
+      case CELL.GRAY_AIC: return z > zb ? grayAicRings : emptyTube;
+      case CELL.GRAY_SS: return z > zb ? graySsRings : emptyTube;
+      case CELL.PYREX: return infinite || Math.abs(z) < A.pyrexLength / 2 ? pyrexRings : emptyTube;
+      default: return emptyTube;
+    }
+  };
+  /** Planes across a cell of this kind where its rings change. */
+  const zPlanes = (kind) => (rodded(kind) ? [zb] : kind === CELL.IFBA ? [-A.ifbaLength / 2, A.ifbaLength / 2] : kind === CELL.PYREX ? [-A.pyrexLength / 2, A.pyrexLength / 2] : []);
+
+  // The cell grid: P cm square cells, NX across. One kind and fuel region per cell.
+  const n = A.n;
+  const P = infinite && lattice === 'pin' ? (cfg.pinPitch ?? 1.26) : A.assemblyPitch / n; // the inter-assembly gap shared out among the cells
+  const NX = infinite ? (lattice === 'pin' ? 1 : n) : 15 * n;
+  const kindT = new Uint8Array(NX * NX), fuelT = new Uint8Array(NX * NX);
+  const assemblyKinds = (a) => {
+    const k = new Uint8Array(n * n).fill(CELL.FUEL);
+    k[8 * n + 8] = CELL.INSTRUMENT;
+    GUIDE_TUBES.forEach(([gi, gj], t) => {
+      let kind = CELL.GUIDE;
+      if (a.control === 1) kind = CELL.BLACK;
+      else if (a.control === 2) kind = t % 2 ? CELL.GRAY_SS : CELL.GRAY_AIC;
+      else if (absorbers && t < a.pyrex) kind = CELL.PYREX;
+      k[gi * n + gj] = kind;
+    });
+    // IFBA rods: an even spread over the fuel rods (every so many, row by row).
+    if (absorbers && a.ifba) {
+      const fuelIdx = [];
+      for (let q = 0; q < n * n; q++) if (k[q] === CELL.FUEL) fuelIdx.push(q);
+      for (let m = 0; m < a.ifba; m++) k[fuelIdx[Math.floor(((m + 0.5) * fuelIdx.length) / a.ifba)]] = CELL.IFBA;
+    }
+    return k;
+  };
+  let layout = null;
+  if (infinite && lattice === 'pin') { kindT[0] = CELL.FUEL; fuelT[0] = 0; }
+  else if (infinite) {
+    const k = assemblyKinds({ control: insert === 'black' ? 1 : 0, pyrex: 0, ifba: 0 });
+    kindT.set(k);
+    fuelT.fill(cfg.enrich ? 0 : 1);
+  } else {
+    layout = ap1000Layout();
+    for (const a of layout) {
+      const k = assemblyKinds(a), I = a.i + 7, J = a.j + 7;
+      for (let li = 0; li < n; li++) for (let lj = 0; lj < n; lj++) {
+        const q = (I * n + li) * NX + J * n + lj;
+        kindT[q] = k[li * n + lj];
+        fuelT[q] = a.region;
+      }
+    }
+  }
+  const W = (NX * P) / 2; // half-width of the grid
+  /** The cell holding (x, y): its index (or −1 outside the grid) and centre. */
+  const cellOf = (x, y) => {
+    let gx = Math.floor(x / P + NX / 2), gy = Math.floor(y / P + NX / 2);
+    const cx = (gx - NX / 2 + 0.5) * P, cy = (gy - NX / 2 + 0.5) * P;
+    if (infinite) { gx = ((gx % NX) + NX) % NX; gy = ((gy % NX) + NX) % NX; }
+    else if (gx < 0 || gy < 0 || gx >= NX || gy >= NX) return { q: -1, cx, cy };
+    return { q: gx * NX + gy, cx, cy };
+  };
+
+  const sys = {
+    kind: 'reactor', design: 'ap1000', pins: true, fuel: 'U', enrichment: enrich[1] ?? enrich[0], moderator: 'water', lumps: false,
+    boron, hot, absorbers, infinite, rods: cfg.rods ?? 0, a: A.pelletR, pitch: P, R: A.equivalentR, R2: Rb, H: A.H, zb, rodXY: [], rodR: 0,
+    mats, fuelMat: mats[PIN_REG.FUEL1], modMat: water, refMat: null, fuelRegions: FUEL_REGIONS, layout, kT,
+    setRods(x) { sys.rods = x; zb = sys.zb = H2 - A.H * x; },
+    regionAt(p) {
+      if (!infinite) {
+        if (Math.abs(p[2]) >= Z2 || p[0] * p[0] + p[1] * p[1] >= Rb * Rb) return OUT;
+        if (Math.abs(p[2]) >= H2) return PIN_REG.WATER;
+      }
+      const { q, cx, cy } = cellOf(p[0], p[1]);
+      if (q < 0 || kindT[q] === CELL.WATER) return PIN_REG.WATER;
+      const rr = (p[0] - cx) ** 2 + (p[1] - cy) ** 2;
+      for (const [r2, reg] of rings(kindT[q], fuelT[q], p[2])) if (rr < r2) return reg;
+      return PIN_REG.WATER;
+    },
+    boundary(p, d, region, cap = Infinity) {
+      let t = cap;
+      const plane = (z0) => { if (d[2] !== 0) { const tt = (z0 - p[2]) / d[2]; if (tt > 1e-9 && tt < t) t = tt; } };
+      const a2 = d[0] * d[0] + d[1] * d[1];
+      if (!infinite) {
+        plane(-Z2); plane(Z2); plane(-H2); plane(H2);
+        if (a2 > 1e-12) { const b = p[0] * d[0] + p[1] * d[1], c = p[0] * p[0] + p[1] * p[1] - Rb * Rb; t = Math.min(t, (-b + Math.sqrt(Math.max(0, b * b - a2 * c))) / a2); }
+        if (Math.abs(p[2]) >= H2) return t; // water above or below the fuel
+      }
+      const { q, cx, cy } = cellOf(p[0], p[1]);
+      if (q < 0 && !infinite) {
+        // Between the grid's edge and the barrel: the grid's sides.
+        for (let ax = 0; ax < 2; ax++) {
+          if (d[ax] > 0 && p[ax] < -W) t = Math.min(t, (-W - p[ax]) / d[ax]);
+          if (d[ax] < 0 && p[ax] > W) t = Math.min(t, (W - p[ax]) / d[ax]);
+        }
+        return t;
+      }
+      // The cell's walls.
+      if (d[0] > 0) t = Math.min(t, (cx + P / 2 - p[0]) / d[0]); else if (d[0] < 0) t = Math.min(t, (cx - P / 2 - p[0]) / d[0]);
+      if (d[1] > 0) t = Math.min(t, (cy + P / 2 - p[1]) / d[1]); else if (d[1] < 0) t = Math.min(t, (cy - P / 2 - p[1]) / d[1]);
+      const kind = kindT[q];
+      if (kind === CELL.WATER) return t;
+      // Its rings, and the planes where they change.
+      if (!infinite) for (const z0 of zPlanes(kind)) if (Math.abs(z0) < H2) plane(z0);
+      if (a2 > 1e-12) {
+        const px = p[0] - cx, py = p[1] - cy, b = px * d[0] + py * d[1], rho2 = px * px + py * py;
+        for (const [r2] of rings(kind, fuelT[q], p[2])) {
+          const disc = b * b - a2 * (rho2 - r2);
+          if (disc <= 0) continue;
+          const sq = Math.sqrt(disc), t1 = (-b - sq) / a2, t2 = (-b + sq) / a2;
+          if (t1 > 1e-9 && t1 < t) t = t1;
+          else if (t2 > 1e-9 && t2 < t) t = t2;
+        }
+      }
+      return t;
+    },
+    /** A fission site drawn from the fundamental mode J₀(2.405 r/R)·cos(πz/H), in fuel. */
+    sourcePoint(r) {
+      for (;;) {
+        let x;
+        if (infinite) x = [(r() - 0.5) * 2 * W, (r() - 0.5) * 2 * W, (r() - 0.5) * 100];
+        else {
+          const Re = A.equivalentR + 7, He = A.H + 14;
+          let rho, z;
+          do rho = A.equivalentR * 1.08 * Math.sqrt(r()); while (r() > besselJ0((2.405 * rho) / Re));
+          do z = (r() - 0.5) * A.H; while (r() > Math.cos((Math.PI * z) / He));
+          const ph = 2 * Math.PI * r();
+          x = [rho * Math.cos(ph), rho * Math.sin(ph), z];
+        }
+        if (FUEL_REGIONS.includes(sys.regionAt(x))) return x;
+      }
+    },
+  };
+  if (!infinite) {
+    // Fuel rods, and where the control rodlets are (x, y, 1 black or 2 gray-absorber or 3 gray-steel).
+    let pins = 0, fissileVol = 0;
+    const rodlets = [];
+    for (let q = 0; q < NX * NX; q++) {
+      const kind = kindT[q];
+      if (kind === CELL.FUEL || kind === CELL.IFBA) { pins++; fissileVol += fissile(mats[FUEL_OF[fuelT[q]]]); }
+      else if (rodded(kind)) {
+        const gx = Math.floor(q / NX), gy = q % NX;
+        rodlets.push((gx - NX / 2 + 0.5) * P, (gy - NX / 2 + 0.5) * P, kind === CELL.BLACK ? 1 : kind === CELL.GRAY_AIC ? 2 : 3);
+      }
+    }
+    const pelletVol = Math.PI * A.pelletR ** 2 * A.H;
+    sys.lumpCount = pins;
+    sys.rodlets = new Float32Array(rodlets);
+    sys.mass = ((pins * pelletVol * (cfg.fuelDensity ?? A.fuelDensity)) / 1000) * (238.0 / 270.0); // uranium, kg
+    sys.modMass = (water.density * Math.PI * A.equivalentR ** 2 * A.H * 0.55) / 1000;
+    sys.fissileAtoms = fissileVol * 1e24 * pelletVol;
+    sys.v = (Math.PI * A.pelletR ** 2) / P ** 2;
+  }
+  return sys;
+}
+
 // ---------- transport ----------
 
 /**
@@ -542,7 +929,8 @@ export function collide(sys, n, r) {
     const q = A * A + 2 * A * muc + 1;
     let E2 = (E * q) / ((A + 1) * (A + 1));
     const mul = (1 + A * muc) / Math.sqrt(q);
-    if (E2 < 4 * KT_ROOM) E2 = sampleThermal(r); // slowed to thermal: now in equilibrium with the material
+    const kT = mat.kT ?? KT_ROOM;
+    if (E2 < 4 * kT) E2 = sampleThermal(r, kT); // slowed to thermal: now in equilibrium with the material
     return { kind: 'elastic', nuclide: hit.p.key, out: [{ ...n, d: deflect(n.d, mul, r), E: E2 }], E };
   }
   const T = Math.sqrt((8 * E) / A); // nuclear temperature of the excited target (Fermi gas, a = A/8)
@@ -585,6 +973,7 @@ function history(sys, n0, r, sites, tally) {
         else if (res.kind === 'capture') tally.epiCapture++;
         else tally.epiFission++;
         if (n.region === 2) tally.rod++;
+        if (res.nuclide === 'B10' && sys.mats[n.region] === sys.modMat) tally.boron++;
       }
       if (res.kind === 'fission') {
         tally.fission++;
@@ -610,7 +999,7 @@ const FUEL_NUCLIDES = new Set(['U235', 'U238', 'Pu239']);
 
 const emptyTally = () => ({
   escape: 0, capture: 0, fission: 0, genTime: 0, prompt: 0, delayed: 0, made: 0, madeThermal: 0,
-  thermalized: 0, epiCapture: 0, epiFission: 0, thAbsFuel: 0, thAbsOther: 0, r2: 0, absorbed: 0, rod: 0, byNuclide: {},
+  thermalized: 0, epiCapture: 0, epiFission: 0, thAbsFuel: 0, thAbsOther: 0, r2: 0, absorbed: 0, rod: 0, boron: 0, byNuclide: {},
 });
 
 /**
@@ -657,7 +1046,7 @@ export function kEffective(sys, { neutrons = 2000, skip = 8, active = 20, seed =
   const dominant = Object.entries(sum.byNuclide).sort((x, y) => y[1] - x[1])[0]?.[0] ?? 'U235';
   return {
     k, sd, genTime: sum.prompt ? sum.genTime / sum.prompt : 0, beta: born ? sum.delayed / born : 0, dominant,
-    escape: sum.escape / ends, capture: sum.capture / ends, fission: sum.fission / ends, rod: sum.rod / ends,
+    escape: sum.escape / ends, capture: sum.capture / ends, fission: sum.fission / ends, rod: sum.rod / ends, boron: sum.boron / ends,
     fourFactor, M2: sum.absorbed ? sum.r2 / sum.absorbed / 6 : 0,
     sites: lastSites.slice(0, 1500).map((s) => s.p),
   };

@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { nextEvent, collide, speed, rng, pointInFuel, FISSION_MEV, DELAYED } from './chain.js';
+import { nextEvent, collide, speed, rng, pointInFuel, FISSION_MEV, DELAYED, AP1000 } from './chain.js';
 
 const CAP = 1200; // tracked neutrons; above this, half are dropped and the rest count double
 const SEGMENTS = 9000; // finished track segments kept for the fading trails
@@ -24,6 +24,11 @@ const PRECURSORS = 3000;
 /** Uranium's color, from ²³⁸U grey toward ²³⁵U gold as the enrichment rises. */
 export function uraniumColor(e) {
   return new THREE.Color(NUCLIDE_COLORS.U238).lerp(new THREE.Color(NUCLIDE_COLORS.U235), Math.min(1, Math.sqrt(e / 0.2)));
+}
+
+/** Power-reactor fuel (2–5% ²³⁵U), on a stretched scale so the enrichment zones tell apart. */
+export function pwrFuelColor(e) {
+  return new THREE.Color(NUCLIDE_COLORS.U238).lerp(new THREE.Color(NUCLIDE_COLORS.U235), Math.min(1, Math.max(0, (e - 0.015) / 0.032)));
 }
 
 /** Neutron color by energy: fast white-cyan, intermediate sky blue, thermal deep blue. */
@@ -123,11 +128,12 @@ export class ChainViewer {
   fit() {
     if (!this.sys) return;
     const reactor = this.sys.kind === 'reactor';
-    const R = reactor ? 1.3 * this.sys.R : this.sys.R2; // a reactor's rods stick out above the core
+    // A reactor's rods stick out above the core; a PWR core is taller than it is wide.
+    const R = this.sys.pins ? 0.62 * this.sys.H + 30 : reactor ? 1.3 * this.sys.R : this.sys.R2;
     const fov = (this.camera.fov * Math.PI) / 180;
     const dist = (1.25 * R) / Math.sin(Math.min(fov, fov * this.camera.aspect) / 2);
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-    this.controls.target.set(0, 0, reactor ? 0.15 * this.sys.R : 0);
+    this.controls.target.set(0, 0, this.sys.pins ? 0.08 * this.sys.H : reactor ? 0.15 * this.sys.R : 0);
     this.camera.position.copy(dir.multiplyScalar(dist).add(this.controls.target));
     this.camera.near = dist / 100; this.camera.far = dist * 10;
     this.camera.updateProjectionMatrix();
@@ -173,6 +179,13 @@ export class ChainViewer {
     };
     this.fuelShell = shell('#ffcf6b', 0.06);
     this.refShell = shell('#8a93a8', 0.1);
+    // A PWR: its fuel assemblies, the water-filled barrel round them, and the rod clusters.
+    this.pwr = new THREE.Group();
+    this.assemblyMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.28, depthWrite: false, roughness: 0.7 });
+    this.barrelMat = new THREE.MeshStandardMaterial({ color: MODERATOR_COLORS.water, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide, roughness: 0.6 });
+    this.rodletMat = new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0.3 });
+    this.clipped.push(this.assemblyMat, this.barrelMat, this.rodletMat);
+    this.scene.add(this.pwr);
     // Neutrons.
     const ng = new THREE.BufferGeometry();
     ng.setAttribute('position', new THREE.BufferAttribute(new Float32Array(CAP * 2 * 3), 3));
@@ -217,7 +230,7 @@ export class ChainViewer {
     const pos = this.dots.geometry.attributes.position.array, col = this.dots.geometry.attributes.color.array;
     const parts = sys.fuelMat.parts, total = parts.reduce((s, p) => s + p.N, 0);
     this.dotKind = new Array(DOTS);
-    this.dots.visible = !reactor || !sys.lumps;
+    this.dots.visible = !reactor || (!sys.lumps && !sys.pins);
     for (let i = 0; i < DOTS && this.dots.visible; i++) {
       const p = pointInFuel(sys, r);
       pos.set(p, 3 * i);
@@ -239,6 +252,8 @@ export class ChainViewer {
       this.lumpPts.material.size = 2 * sys.a;
       this.lumpPts.material.color.copy(uraniumColor(sys.enrichment));
     }
+    this.#buildPwr(sys);
+    this.fuelShell.visible = !sys.pins;
     this.fuelShell.material.color.set(reactor ? MODERATOR_COLORS[sys.moderator] : '#ffcf6b');
     this.fuelShell.material.opacity = reactor ? (sys.moderator === 'graphite' ? 0.16 : 0.1) : 0.06;
     this.rodGroup.clear();
@@ -272,11 +287,40 @@ export class ChainViewer {
     if (resized) this.fit();
   }
 
+  /** A PWR core: one box per fuel assembly (colored by enrichment), the barrel, and the rodlets. */
+  #buildPwr(sys) {
+    for (const c of this.pwr.children) c.geometry?.dispose();
+    this.pwr.clear();
+    this.rodlets = null;
+    this.pwr.visible = !!sys.pins;
+    if (!sys.pins) return;
+    const A = AP1000, side = A.assemblyPitch - 0.6, m = new THREE.Matrix4(), c = new THREE.Color();
+    const boxes = new THREE.InstancedMesh(new THREE.BoxGeometry(side, side, A.H), this.assemblyMat, sys.layout.length);
+    sys.layout.forEach((a, k) => {
+      boxes.setMatrixAt(k, m.makeTranslation(a.i * A.assemblyPitch, a.j * A.assemblyPitch, 0));
+      boxes.setColorAt(k, c.copy(pwrFuelColor(A.enrich[a.region])));
+    });
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(A.barrelR, A.barrelR, A.H + 2 * A.reflector, 72, 1, true).rotateX(Math.PI / 2), this.barrelMat);
+    // Rodlets drawn thicker than life (they're 9 mm across) so they show at this scale.
+    const n = sys.rodlets.length / 3;
+    const rods = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.7, 0.7, 1, 6).rotateX(Math.PI / 2), this.rodletMat, n);
+    for (let k = 0; k < n; k++) rods.setColorAt(k, c.set(sys.rodlets[3 * k + 2] === 1 ? ROD_COLOR : sys.rodlets[3 * k + 2] === 2 ? '#7a808c' : '#a9b0bb'));
+    this.rodlets = rods;
+    this.pwr.add(boxes, barrel, rods);
+  }
+
   /** Move the control rods: 0 = withdrawn, 1 = fully in. */
   setRods(x) {
     const sys = this.sys;
     if (sys?.kind !== 'reactor') return;
     sys.setRods(x);
+    if (sys.pins && this.rodlets) {
+      // Rodlets run from their tips up to the drive's top, well above the core.
+      const top = sys.H / 2 + 90, h = Math.max(1e-3, top - sys.zb), m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, h), v = new THREE.Vector3();
+      for (let k = 0; k < sys.rodlets.length / 3; k++) this.rodlets.setMatrixAt(k, m.compose(v.set(sys.rodlets[3 * k], sys.rodlets[3 * k + 1], sys.zb + h / 2), q, sc));
+      this.rodlets.instanceMatrix.needsUpdate = true;
+      return;
+    }
     const top = 1.35 * sys.R, h = Math.max(1e-3, top - sys.zb);
     for (const m of this.rodGroup.children) { m.scale.set(1, 1, h); m.position.z = sys.zb + h / 2; }
   }

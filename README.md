@@ -327,7 +327,7 @@ Sliders set the lump size, the spacing between lumps and the core radius;
 ²³⁸U's resonances below 4 keV are drawn individually and Doppler-broadened,
 so lumping really helps, as it did for CP-1. Their dilute resonance integral
 comes out at 277 b (measured 275 b). Natural uranium in graphite gives
-k∞ = 1.054 in lumps and 0.67 mixed evenly. The panel splits k∞ into the four
+k∞ = 1.055 in lumps and 0.66 mixed evenly. The panel splits k∞ into the four
 factors (η, f, p, ε) and gives the migration length, k at the current rod
 position (fitted through three rod positions), the rods' worth in dollars and
 the critical size. **▶ Run the reactor** switches to the seconds-to-minutes
@@ -337,6 +337,34 @@ prompt generation time from the transport runs. Pull the rods out (they move
 chart. The panel also says when the core is supercritical on delayed neutrons
 or prompt critical. **SCRAM** drops the rods; an automatic SCRAM trips on a
 period under 10 s or power above 10 MW.
+
+*AP1000* (a reactor-core preset): Westinghouse's pressurized-water reactor,
+rod by rod, from its Design Control Document (Rev. 19). The core has 157
+fuel assemblies of 17×17 rods: 41,448 UO₂ fuel rods in zirconium-alloy
+cladding, with guide tubes and an instrument tube. They sit in borated water
+inside the core barrel. The first core's three enrichments are 2.35%, 3.40%
+and 4.45%. It has 53 black and 16 gray rod clusters (silver–indium–cadmium
+rodlets), plus its burnable absorbers: borosilicate-glass rods and
+boride-coated fuel. Controls set the dissolved boron, hot zero power
+(557 °F) or cold (68 °F), the burnable absorbers on or off, and the rods.
+All 69 clusters move together at the real 45 inches per minute. The panel
+gives k∞ for one assembly, k for the core, rod worth, prompt neutron
+lifetime and the estimated critical boron, each next to the published
+design value. Temperature enters the physics: ²³⁸U's resonances are
+Doppler-broadened, and thermal neutrons take on a Maxwell spread at the
+water's temperature. Silver, indium and cadmium have their main capture
+resonances drawn individually. Checks:
+
+- ORNL's VERA benchmark for this fuel at 565 K (a fuel-rod cell, an
+  assembly, and an assembly with 24 Ag–In–Cd rods) agrees within 0.4%.
+- At 1,382 ppm, hot, with the rods out, the core gives k = 1.000 ± 0.005.
+  The design's critical boron is 1,382 ppm.
+- The boron worth comes out at −8.2 pcm/ppm (design range −6.9 to −10.5).
+- The prompt neutron lifetime comes out at 21 µs (design 19.8 µs).
+
+Which assemblies hold rod clusters and burnable absorbers is a symmetric
+reconstruction that matches the published counts. The 69 clusters come out
+worth about 10–11%, against the design's 12.7%.
 
 In both systems a bar at the top of the view shows the **neutrons produced**
 so far (by fission, delayed emission and (n,2n), not counting the source), the
@@ -446,7 +474,7 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 - `js/nucleus-viewer.js`: nucleon dynamics (mean field, NN force, thermostat) and the three.js nucleus and nucleon scenes
 - `js/reactions.js`: compound-nucleus reactions (Coulomb tunneling, photoabsorption, level densities, decay widths, cascades, fission splits)
 - `js/bombard.js`: turns one collision into animation stages, captions, real timings, odds, energy budget and products
-- `js/chain.js`: neutron transport for chain reactions (cross sections, ²³⁸U resonances, delayed neutrons, ball and reactor-lattice geometry, k and four factors by power iteration, critical size, point kinetics)
+- `js/chain.js`: neutron transport for chain reactions (cross sections, resonances with Doppler broadening, delayed neutrons, ball, reactor-lattice and AP1000 rod-by-rod geometry, k and four factors by power iteration, critical size, point kinetics)
 - `js/chain-worker.js`: computes k and the critical size off the main thread (the page runs several at once, one task each)
 - `js/chain-viewer.js`: the 3D chain-reaction scene and live simulation
 - `js/chain-ui.js`: chain-reaction controls and readout
