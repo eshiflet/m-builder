@@ -744,8 +744,29 @@ p.four { font-variant-numeric: tabular-nums; font-size: 13px; margin: 4px 0; }
 .cp-mimic .m-pump path { stroke: var(--tick); stroke-width: 2; }
 .cp-mimic .m-pump.spin .m-blades { animation: cp-spin 0.6s linear infinite; }
 @keyframes cp-spin { to { transform: rotate(360deg); } }
-.cp-sequoyah .cp-wall { background: #26302a; border: 2px solid #222; border-radius: 6px; padding: 6px; }
-.cp-sequoyah .cp-wall .cp-tag { color: #c9d6c6; }
+/* Sequoyah's mimic is painted on a light board: dark outlines and lettering, strong flow colors. */
+.cp-sequoyah .cp-wall { background: #e8ece2; border: 2px solid #222; border-radius: 6px; padding: 6px; }
+.cp-sequoyah .cp-wall .cp-tag { color: #1d221c; }
+.cp-sequoyah .cp-mimic .m-cont { stroke: #5b6658; }
+.cp-sequoyah .cp-mimic .m-lbl { fill: #1d221c; }
+.cp-sequoyah .cp-mimic .m-val { fill: #b0200c; font-weight: 700; }
+.cp-sequoyah .cp-mimic .m-vessel, .cp-sequoyah .cp-mimic .m-cond { fill: #ffffff; stroke: #1a1a1a; }
+.cp-sequoyah .cp-mimic .m-rod { stroke: #1a1a1a; }
+.cp-sequoyah .cp-mimic .m-water { fill: #4f8fe0; opacity: 0.75; }
+.cp-sequoyah .cp-mimic .m-core { fill: #2f6fe0; filter: none; }
+.cp-sequoyah .cp-mimic .m-hot { stroke: #d2401f; }
+.cp-sequoyah .cp-mimic .m-cold { stroke: #1f63c9; }
+.cp-sequoyah .cp-mimic .m-pipe, .cp-sequoyah .cp-mimic .m-shaft { stroke: #8a9388; }
+.cp-sequoyah .cp-mimic .m-pipe.on { stroke: #d99000; }
+.cp-sequoyah .cp-mimic .m-steam { stroke: #b4bcb2; }
+.cp-sequoyah .cp-mimic .m-steam.on { stroke: #5a6470; }
+.cp-sequoyah .cp-mimic .m-feed { stroke: #258a3c; }
+.cp-sequoyah .cp-mimic .m-valve { fill: #3cb04a; stroke: #1a1a1a; }
+.cp-sequoyah .cp-mimic .m-turb, .cp-sequoyah .cp-mimic .m-gen { fill: #ffffff; stroke: #1a1a1a; }
+.cp-sequoyah .cp-mimic .m-turb.on, .cp-sequoyah .cp-mimic .m-gen.on { fill: #f6c2b8; }
+.cp-sequoyah .cp-mimic .m-pump circle { fill: #ffffff; stroke: #1a1a1a; }
+.cp-sequoyah .cp-mimic .m-pump path { stroke: #1a1a1a; }
+.cp-sequoyah .cp-mimic .m-pump.spin circle { fill: #f6c2b8; }
 
 /* Annunciators */
 .cp-annbtns { margin-left: auto; display: flex; gap: 4px; }

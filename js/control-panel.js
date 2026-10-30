@@ -186,7 +186,7 @@ export function createControlPanel(root, hooks) {
   function mimic(ap, P) {
     return `<svg class="cp-mimic" viewBox="0 0 640 170" aria-label="Plant overview">
       <path class="m-cont" d="M14 166 V70 Q14 6 160 6 Q306 6 306 70 V166"/>
-      <text class="m-lbl" x="160" y="22" text-anchor="middle">${ap ? 'STEEL CONTAINMENT VESSEL' : 'ICE CONDENSER CONTAINMENT'}</text>
+      <text class="m-lbl" x="${ap ? 160 : 108}" y="22" text-anchor="middle">${ap ? 'STEEL CONTAINMENT VESSEL' : 'ICE CONDENSER CONTAINMENT'}</text>
       <path class="m-hot" data-ref="mHot" d="M104 78 H160 Q176 78 182 104 L190 116"/>
       <path class="m-cold" data-ref="mCold" d="M232 128 H250 V150 H180 M164 150 H104"/>
       <g class="m-pump" data-ref="mPump" transform="translate(172 150)"><circle r="9"/><g class="m-blades"><path d="M0 -7 L0 7 M-7 0 L7 0"/></g></g>
