@@ -390,7 +390,9 @@ worths, which comes from separate Monte Carlo runs.
 *Control room panel* (AP1000 and Sequoyah): in a reactor simulation the
 periodic table makes way for a working control panel (for the other reactors,
 the reactor controls take its place; any other view, or the Atoms, Molecules
-or Zoom tabs, bring the table back). For the AP1000 it follows that plant's digital main
+or Zoom tabs, bring the table back). The messages get a panel of their own:
+under the core view for the AP1000 and Sequoyah, under the controls for the
+other reactors. For the AP1000 it follows that plant's digital main
 control room: screens at the reactor operator's workstation, a wall panel
 showing the whole plant, and hardwired switches on the dedicated safety panel.
 For Sequoyah it follows the analog benchboards of a Westinghouse four-loop

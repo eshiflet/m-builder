@@ -383,20 +383,28 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   });
 
   // In a reactor simulation the periodic table makes way: the AP1000 and Sequoyah put their control
-  // panel in its place, and the other reactors their controls.
+  // panel in its place, and the other reactors their controls. The captions leave the core view for
+  // a panel of their own: under the core view with a control panel, under the controls without.
   const sidePane = $('#side-pane'), tablePane = document.querySelector('.table-pane');
-  const cpEl = $('#chain-panel'), ctrlEl = $('#nuc-panel > .controls');
-  const cpHome = document.createComment('chain-panel'), ctrlHome = document.createComment('controls');
+  const cpEl = $('#chain-panel'), ctrlEl = $('#nuc-panel > .controls'), capEl = $('#nuc-caption');
+  const stageEl = $('#nuc-panel > .stage');
+  const cpHome = document.createComment('chain-panel'), ctrlHome = document.createComment('controls'), capHome = document.createComment('caption');
   cpEl.before(cpHome);
   ctrlEl.before(ctrlHome);
+  capEl.before(capHome);
   let active = false;
   function layoutSide() {
-    const want = shown && active && reactor() ? (pwr() ? cpEl : ctrlEl) : null;
+    const sim = shown && active && reactor();
+    const want = sim ? (pwr() ? cpEl : ctrlEl) : null;
     for (const [el, home] of [[cpEl, cpHome], [ctrlEl, ctrlHome]]) {
       if (el === want) { if (el.parentElement !== sidePane) sidePane.append(el); } else if (el.parentElement === sidePane) home.after(el);
     }
     sidePane.hidden = !want;
     tablePane.hidden = !!want;
+    if (!sim) { if (capEl.previousSibling !== capHome) capHome.after(capEl); }
+    else if (pwr()) { if (stageEl.nextSibling !== capEl) stageEl.after(capEl); }
+    else if (ctrlEl.nextSibling !== capEl) ctrlEl.after(capEl);
+    capEl.classList.toggle('caption-panel', sim);
   }
 
   function panelUpdate() {

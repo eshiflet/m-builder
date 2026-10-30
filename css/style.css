@@ -449,6 +449,9 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .caption-log p.latest { color: var(--text); }
 .caption-close { position: absolute; top: 3px; right: 5px; border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 2px 4px; cursor: pointer; }
 .caption-close:hover { color: var(--text); }
+/* In a reactor simulation the captions get a panel of their own, out of the core view. */
+.stage-caption.caption-panel { position: relative; left: auto; bottom: auto; transform: none; width: auto; z-index: auto; background: var(--panel); border-radius: var(--radius); }
+.caption-panel .caption-log { max-height: 12em; }
 .decay-chart { width: 100%; max-width: 560px; height: auto; margin-top: 6px; }
 .decay-chart .curve { fill: none; stroke: var(--accent); stroke-width: 2; }
 .decay-chart .tunnel { fill: #ffd75e; opacity: 0.25; }
