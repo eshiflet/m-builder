@@ -18,7 +18,7 @@ const REACTOR_PRESETS = {
   water: { label: 'Water-cooled (4% fuel)', cfg: { design: null, enrichment: 0.04, moderator: 'water', lumps: true, a: 0.59, pitch: 1.5, R: 26 } },
   heavy: { label: 'Heavy water, natural uranium', cfg: { design: null, enrichment: 0.0072, moderator: 'heavy', lumps: true, a: 3.8, pitch: 20, R: 130 } },
   ap1000: { label: 'AP1000 (Westinghouse PWR)', cfg: { design: 'ap1000', boron: AP1000.criticalBoronHot, hot: true, absorbers: true, banks: null } },
-  sequoyah: { label: 'Sequoyah (TVA, near Chattanooga)', cfg: { design: 'sequoyah', boron: SEQUOYAH.criticalBoronHot, hot: true, absorbers: true, banks: null } },
+  sequoyah: { label: 'TVA Sequoyah (Westinghouse PWR)', cfg: { design: 'sequoyah', boron: SEQUOYAH.criticalBoronHot, hot: true, absorbers: true, banks: null } },
 };
 const PWR_SPECS = { ap1000: AP1000, sequoyah: SEQUOYAH };
 const ROD_SPEED = 0.02; // fraction of full travel per second, as real rod drives move
