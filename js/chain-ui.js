@@ -382,9 +382,9 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     },
   });
 
-  // In a reactor simulation the periodic table makes way: the AP1000 and Sequoyah put their control
-  // panel in its place, and the other reactors their controls. The captions leave the core view for
-  // a panel of their own: under the core view with a control panel, under the controls without.
+  // In the chain reaction view the periodic table makes way: the AP1000 and Sequoyah put their control
+  // panel in its place, and the metal ball and the other reactors their controls. The captions leave
+  // the 3D view for a panel of their own: under the core view with a control panel, under the controls without.
   const sidePane = $('#side-pane'), tablePane = document.querySelector('.table-pane');
   const cpEl = $('#chain-panel'), ctrlEl = $('#nuc-panel > .controls'), capEl = $('#nuc-caption');
   const stageEl = $('#nuc-panel > .stage');
@@ -394,7 +394,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   capEl.before(capHome);
   let active = false;
   function layoutSide() {
-    const sim = shown && active && reactor();
+    const sim = shown && active;
     const want = sim ? (pwr() ? cpEl : ctrlEl) : null;
     for (const [el, home] of [[cpEl, cpHome], [ctrlEl, ctrlHome]]) {
       if (el === want) { if (el.parentElement !== sidePane) sidePane.append(el); } else if (el.parentElement === sidePane) home.after(el);
