@@ -382,7 +382,25 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     },
   });
 
+  // In a reactor simulation the periodic table makes way: the AP1000 and Sequoyah put their control
+  // panel in its place, and the other reactors their controls.
+  const sidePane = $('#side-pane'), tablePane = document.querySelector('.table-pane');
+  const cpEl = $('#chain-panel'), ctrlEl = $('#nuc-panel > .controls');
+  const cpHome = document.createComment('chain-panel'), ctrlHome = document.createComment('controls');
+  cpEl.before(cpHome);
+  ctrlEl.before(ctrlHome);
+  let active = false;
+  function layoutSide() {
+    const want = shown && active && reactor() ? (pwr() ? cpEl : ctrlEl) : null;
+    for (const [el, home] of [[cpEl, cpHome], [ctrlEl, ctrlHome]]) {
+      if (el === want) { if (el.parentElement !== sidePane) sidePane.append(el); } else if (el.parentElement === sidePane) home.after(el);
+    }
+    sidePane.hidden = !want;
+    tablePane.hidden = !!want;
+  }
+
   function panelUpdate() {
+    layoutSide();
     const show = shown && pwr() && !!plant;
     $('#chain-panel').hidden = !show;
     if (!show) return;
@@ -396,6 +414,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   // ---------- rendering ----------
 
   function render() {
+    layoutSide();
     if (!shown) return;
     const r = reactor();
     document.querySelectorAll('#chain-system button').forEach((b) => b.classList.toggle('on', b.dataset.value === mode));
@@ -602,7 +621,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
           <li>Of every 100 neutrons born here, <b>${Math.round(100 * k.fission)}</b> go on to split a nucleus, <b>${Math.round(100 * k.capture)}</b> end up captured and <b>${Math.round(100 * k.escape)}</b> escape.</li>
           <li>Time from a neutron’s birth to the fission it causes (one generation): <b>${fmtTime(k.genTime)}</b>${dbl ? ` · the neutron count doubles every <b>${fmtTime(dbl)}</b>` : ''}</li>
           ${pred.Rc === undefined ? '<li class="muted">Finding the critical size…</li>'
-            : pred.Rc === null ? `<li>No size of this ball is ever critical: ${u && cfg.enrichment < 0.05 ? 'too much ²³⁸U soaks up neutrons without splitting. Natural uranium needs a moderator: try <b>Reactor core</b>.' : 'too few of the neutrons go on to cause fissions.'}</li>`
+            : pred.Rc === null ? `<li>No size of this ball is ever critical: ${u && cfg.enrichment < 0.05 ? 'too much ²³⁸U soaks up neutrons without splitting. Natural uranium needs a moderator: try <b>Reactor simulation</b>.' : 'too few of the neutrons go on to cause fissions.'}</li>`
               : `<li>Critical size for this fuel${sys.refMat ? ' and reflector' : ''}: radius <b>${pred.Rc.toFixed(1)} cm</b>, <b>${kg(makeSystem({ ...cfg, R: pred.Rc }).mass)} kg</b> <button class="chip" data-chain-critical>Make it critical</button></li>`}
         </ul>`;
     }
@@ -892,16 +911,17 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
 
   return {
     /** Show or hide the chain view (its canvas, controls and readout). */
-    show(on, active) {
+    show(on, isActive) {
       shown = on;
+      active = isActive;
       $('#nuc-chain').hidden = !on;
       $('#nuc-chain-controls').hidden = !on;
       panelUpdate();
-      viewer.setActive(on && active);
+      viewer.setActive(on && isActive);
       renderHud();
       if (on && !pred && !workers.length) predict();
     },
-    setActive(on) { viewer.setActive(on && shown); },
+    setActive(on) { active = on; layoutSide(); viewer.setActive(on && shown); },
     render,
     fit() { viewer.fit(); },
   };

@@ -318,7 +318,7 @@ radius**, and **Reflector** (natural uranium, beryllium or water, with a
 thickness). With these cross sections, the Godiva, Jezebel and Flattop
 benchmark critical experiments come out within about 1% of k = 1.
 
-*Reactor core*: a sphere holding a cubic lattice of uranium-metal lumps in
+*Reactor simulation*: a sphere holding a cubic lattice of uranium-metal lumps in
 **graphite**, **water** or **heavy water**, with nine boron-carbide **control
 rods** that drop in from the top. Presets are CP-1 (Chicago 1942), a
 water-cooled core with 4% fuel, and a heavy-water core with natural uranium.
@@ -387,8 +387,10 @@ measurements:
 The panel shows the statistical uncertainty on the critical boron and rod
 worths, which comes from separate Monte Carlo runs.
 
-*Control room panel* (AP1000 and Sequoyah): under the core view sits a
-working control panel. For the AP1000 it follows that plant's digital main
+*Control room panel* (AP1000 and Sequoyah): in a reactor simulation the
+periodic table makes way for a working control panel (for the other reactors,
+the reactor controls take its place; any other view, or the Atoms, Molecules
+or Zoom tabs, bring the table back). For the AP1000 it follows that plant's digital main
 control room: screens at the reactor operator's workstation, a wall panel
 showing the whole plant, and hardwired switches on the dedicated safety panel.
 For Sequoyah it follows the analog benchboards of a Westinghouse four-loop

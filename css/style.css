@@ -139,6 +139,10 @@ sup { font-size: 0.7em; }
 .legend li:hover { color: var(--text); }
 .swatch { width: 10px; height: 10px; border-radius: 3px; }
 
+/* In a reactor simulation, the control panel or the reactor controls take the periodic table's place. */
+.side-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.side-pane[hidden] { display: none; }
+
 /* ---------- Viewer ---------- */
 
 .viewer-pane {
