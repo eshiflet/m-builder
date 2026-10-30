@@ -5,6 +5,8 @@
 import { makeSystem, MEV_J, TNT_TON_J, FISSION_MEV, PointKinetics, AP1000, SEQUOYAH } from './chain.js';
 import { ChainViewer, NUCLIDE_COLORS, REFLECTOR_COLORS, MODERATOR_COLORS, SPENT_COLOR, PRECURSOR_COLOR, ROD_COLOR, uraniumColor, pwrFuelColor, fmtTime } from './chain-viewer.js';
 import { sci } from './nucleus-data.js';
+import { Plant } from './plant.js';
+import { createControlPanel } from './control-panel.js';
 
 const $ = (sel) => document.querySelector(sel);
 const ENRICH_PRESETS = [['Natural', 0.0072], ['Reactor fuel', 0.04], ['Research reactor', 0.2], ['Weapons grade', 0.937]];
@@ -22,6 +24,7 @@ const PWR_SPECS = { ap1000: AP1000, sequoyah: SEQUOYAH };
 const ROD_SPEED = 0.02; // fraction of full travel per second, as real rod drives move
 const SCRAM_SPEED = 1.0; // a SCRAM drops the rods in about a second
 const NU = 2.45; // neutrons per fission, for turning the neutron population into power
+const PWR_SOURCE = 2e9; // neutrons/s from a PWR's start-up sources (antimony–beryllium): a few counts a second
 
 const big = (x) => (x < 1e4 ? Math.round(x).toLocaleString() : sci(x, 2));
 const kg = (m) => (m < 10 ? m.toFixed(2) : m < 1000 ? m.toFixed(1) : Math.round(m).toLocaleString());
@@ -109,6 +112,8 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   let workers = [], jobId = 0, autoSpeed = true;
   let kin = null; // the reactor running on point kinetics
   let kSpeed = 1;
+  let plant = null; // the rest of a PWR plant, for the control panel
+  let panelSync = true; // the panel's knobs need setting from the plant
   viewer.setSystem(sys);
 
   viewer.onMilestone = (html) => addCaption(html);
@@ -176,6 +181,8 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     sys = makeSystem(cfg);
     viewer.setSystem(sys);
     viewer.setRods(rods.now);
+    plant = pwr() ? newPlant() : null;
+    panelSync = true;
     stats = null;
     clearCaptions();
     predictSoon();
@@ -198,47 +205,74 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     return fit ? fit(rods.now) : null;
   }
 
+  /** k with the plant's own reactivity too (boron changes and temperatures), while a PWR runs. */
+  function kTotal() {
+    const k = kNow();
+    return k != null && kin && plant ? k * Math.exp(plant.reactivity()) : k;
+  }
+
+  /** The plant around a PWR core, at hot standby (or cold), with the boron worth from the core run. */
+  function newPlant() {
+    const share = pred?.k?.boron;
+    const boronWorth = share > 0 && cfg.boron > 0 ? -share / cfg.boron : -9e-5;
+    return new Plant(cfg.design, { H: spec().H, boron: cfg.boron, hot: cfg.hot, boronWorth });
+  }
+
   // ---------- running the reactor (point kinetics) ----------
 
   function startKinetics() {
     if (!pred?.k || !pred.rodCurve) return;
     viewer.stop();
     stats = null;
+    if (pwr()) { plant = newPlant(); panelSync = true; }
     kin = {
-      pk: new PointKinetics({ beta: pred.k.beta, Lambda: pred.k.genTime * 1e-9, nuclide: pred.k.dominant }),
+      pk: new PointKinetics({ beta: pred.k.beta, Lambda: pred.k.genTime * 1e-9, nuclide: pred.k.dominant, source: pwr() ? PWR_SOURCE : 1e5 }),
       history: [], period: Infinity, tripped: false, frames: 0, notes: new Set(), produced: 0,
     };
     const k = kNow();
     kin.pk.equilibrate((k - 1) / k);
     kin.P0 = kin.pk.fissionRate(NU) * FISSION_MEV * MEV_J;
     clearCaptions();
-    addCaption(pwr()
-      ? `The reactor starts with the rods ${Math.round(100 * rods.now)}% in and a neutron source of 10⁵ neutrons per second. The rods move at their drives’ top speed, 45 inches a minute, so a full pull takes ${cfg.design === 'sequoyah' ? 'about three' : 'about four'} minutes (try 10×). At ${Math.round(cfg.boron)} ppm boron the core is critical with the rods ${pred?.critBoron != null && pred.critBoron < cfg.boron ? 'never quite out: lower the boron' : 'nearly all the way out'}. Real startups go in steps, waiting at each for the power to settle; pull too fast and the automatic SCRAM trips on the rising power.`
-      : `The reactor starts with the rods ${Math.round(100 * rods.now)}% in and a neutron source of 10⁵ neutrons per second. Drag <b>Control rods</b> to pull them out slowly; they move at ${Math.round(100 * ROD_SPEED)}% of their travel per second.`);
+    if (pwr()) {
+      addCaption(`The plant starts at ${cfg.hot ? 'hot standby: 557 °F, 2,235 psig, all four coolant pumps running, the turbine tripped and the steam dumps holding the steam at 1,092 psig' : 'cold shutdown, 68 °F, with the pressurizer full of water'}, rods ${Math.round(100 * rods.now)}% in. The start-up sources give the source range a few counts a second. At ${Math.round(cfg.boron)} ppm boron the core is critical with the rods ${pred?.critBoron != null && pred.critBoron < cfg.boron ? 'never quite out: dilute the boron' : 'nearly all the way out'}.`);
+      if (cfg.hot) addCaption('<b>To start up from the control panel:</b> hold the <b>ROD MOTION</b> lever up to withdraw (48 steps a minute) until the startup rate holds near +0.5 DPM. When <b>P-6</b> lights, press <b>SR TRIP BLOCK</b> before the source range reaches 10⁵ cps. Level off at 1–3% power, where the core starts heating the coolant. <b>LATCH</b> the turbine and turn up the <b>LOAD SETPOINT</b>; when <b>P-10</b> lights press <b>IR / PR LO BLOCK</b> before 25%; as soon as <b>C-5</b> lights (15% load) put the rods in <b>AUTO</b>, before Tavg sags below its program. Dilute the boron to make room for the rods. 10× during the startup, 100× or more for loading. Here every rod cluster moves together, so each step is worth several times what one bank’s step is in a real plant: go gently.');
+    } else addCaption(`The reactor starts with the rods ${Math.round(100 * rods.now)}% in and a neutron source of 10⁵ neutrons per second. Drag <b>Control rods</b> to pull them out slowly; they move at ${Math.round(100 * ROD_SPEED)}% of their travel per second.`);
     renderButtons();
     renderStatic();
+    panelUpdate();
   }
 
   function stopKinetics() {
     kin = null;
     viewer.glowRate = 0;
+    if (plant) plant.ctl.lever = 0;
     renderButtons();
+    panelUpdate();
   }
 
   function scram(why) {
     rods.target = 1;
     rods.scram = true;
+    rods.rate = null;
     $('#chain-rods').value = 100;
     if (kin && !kin.tripped) {
       kin.tripped = true;
-      addCaption(`<b>SCRAM</b>${why ? ` (${why})` : ''}: every rod drops in. The power falls fast at first (the prompt neutrons die out within milliseconds) and then slowly, over a minute or more, as the last delayed neutrons trickle out.`);
+      addCaption(plant
+        ? `<b>Reactor trip</b>${why ? ` (${why})` : ''}: the trip breakers open and every rod cluster falls in under gravity, and the turbine trips with it. Within seconds the power is down to the decay heat of the fission products (about 6% of what the core was making, if it ran for a while), which the steam dumps carry away. To restart: clear the cause, press <b>TRIP RESET</b>, and withdraw the rods again.`
+        : `<b>SCRAM</b>${why ? ` (${why})` : ''}: every rod drops in. The power falls fast at first (the prompt neutrons die out within milliseconds) and then slowly, over a minute or more, as the last delayed neutrons trickle out.`);
     }
     renderRods();
   }
 
+  /** A trip by hand: through the plant's protection system when there is one. */
+  function manualTrip() {
+    if (plant && kin) plant.tripReactor('manual');
+    scram(kin ? (plant ? 'manual trip' : 'by hand') : null);
+  }
+
   function moveRods(dt) {
     if (rods.now === rods.target) { rods.scram = false; return false; }
-    const v = (rods.scram ? SCRAM_SPEED : pwr() ? spec().rodSpeed / spec().H : ROD_SPEED) * dt;
+    const v = (rods.scram ? SCRAM_SPEED : rods.rate ?? (pwr() ? spec().rodSpeed / spec().H : ROD_SPEED)) * dt;
     rods.now = rods.target > rods.now ? Math.min(rods.target, rods.now + v) : Math.max(rods.target, rods.now - v);
     viewer.setRods(rods.now);
     return true;
@@ -246,17 +280,32 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
 
   function tickKinetics(dt) {
     if (!shown || !reactor()) return;
-    const simDt = kin && !viewer.paused ? dt * kSpeed : dt;
-    const moved = moveRods(kin ? simDt : 10 * dt); // without a run, rods just glide to the slider
-    if (!kin) { if (moved) renderRods(); return; }
-    if (viewer.paused) return;
-    const k = kNow();
-    const rho = (k - 1) / k;
-    const pk = kin.pk;
-    const n0 = pk.n;
-    pk.step(simDt, rho);
-    kin.produced += ((n0 + pk.n) / 2 / pk.Lambda) * simDt;
-    const P = pk.fissionRate(NU) * FISSION_MEV * MEV_J;
+    if (!kin || viewer.paused) {
+      if (moveRods(kin ? dt : 10 * dt)) renderRods(); // without a run, rods just glide to the slider
+      panelUpdate();
+      return;
+    }
+    const simDt = dt * kSpeed, pk = kin.pk;
+    // With a plant, step in tenths of a second so the temperatures and the neutrons keep in step.
+    const steps = plant ? Math.max(1, Math.ceil(simDt / 0.1)) : 1, h = simDt / steps;
+    let moved = false, k = 1, rho = 0, P = 0;
+    for (let i = 0; i < steps && kin; i++) {
+      if (plant && !rods.scram) {
+        const d = plant.rodDemand(rods.now);
+        if (d) { rods.target = d.target; rods.rate = d.rate; }
+      }
+      moved = moveRods(h) || moved;
+      k = kTotal();
+      rho = (k - 1) / k;
+      const n0 = pk.n;
+      pk.step(h, rho);
+      kin.produced += ((n0 + pk.n) / 2 / pk.Lambda) * h;
+      P = pk.fissionRate(NU) * FISSION_MEV * MEV_J;
+      if (plant) {
+        const why = plant.step(h, P, { autoTrip: $('#chain-trip').checked });
+        if (why) scram(why);
+      }
+    }
     kin.history.push([pk.t, P, rods.now]);
     if (kin.history.length > 3000) kin.history = kin.history.filter((_, i) => i % 2 === 0);
     // Period from the last few seconds of power.
@@ -269,12 +318,79 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     if (rho > 0.0005 && rho < pk.beta) note('delayed', `<b>Supercritical on delayed neutrons</b> (k = ${k.toFixed(4)}, ρ = ${(rho / pk.beta).toFixed(2)} dollars). The prompt neutrons alone can’t keep it going, so the power rises only as fast as the precursors decay: a period of ${Math.abs(kin.period) < 1e4 ? `${kin.period.toFixed(0)} s` : 'many seconds'}.`);
     if (rho >= pk.beta) note('prompt', `<b>Prompt critical</b> (ρ = ${(rho / pk.beta).toFixed(2)} dollars): prompt neutrons alone now multiply, and the power climbs every ${fmtTime(pred.k.genTime * Math.LN2 / Math.max(1e-6, rho - pk.beta) * (1 - rho))} rather than every few seconds. No mechanical system can react that fast.`);
     if (P > 0.5) note('half', `The power passes 0.5 W, about what CP-1 made when it first went critical on 2 December 1942.`);
-    if ($('#chain-trip').checked && !kin.tripped) {
+    if (plant) {
+      for (const e of plant.takeEvents()) addCaption(e);
+      if (plant.P6 && !plant.ctl.srBlock && !plant.trip.latched) note('p6', '<b>P-6</b> is lit: the intermediate range is on scale. Press <b>SR TRIP BLOCK</b> now, or the source range trips the reactor at 10⁵ counts a second.');
+      if (plant.hot && plant.q.core > plant.q.pumps) note('heat', `The core now makes more heat than the coolant pumps put in (${plant.q.pumps.toFixed(0)} MW): the <b>point of adding heat</b>. The fuel and the water warm up, their negative temperature coefficients take reactivity away, and the power levels off by itself.`);
+      if (plant.P10 && !plant.ctl.prBlock && !plant.trip.latched) note('p10', '<b>P-10</b> is lit (10% power): press <b>IR / PR LO BLOCK</b> before 25%, or the low-setpoint trips fire.');
+      if (plant.C5 && plant.ctl.rodMode !== 'auto') note('c5', '<b>C-5</b> is lit (turbine above 15%): the rods can now go in <b>AUTO</b>, which moves them to hold Tavg on its program (the amber pointer).');
+      if (plant.frac > 0.98) note('full', `<b>Full power</b>: ${plant.MW.toFixed(0)} MW of heat and about ${plant.MWe.toFixed(0)} MW of electricity.`);
+    } else if ($('#chain-trip').checked && !kin.tripped) {
       if (kin.period > 0 && kin.period < 10 && P > 100 * kin.P0) scram('period shorter than 10 s');
       else if (P > 1e7) scram('power above 10 MW');
     }
-    if (P > 1e12) { addCaption('Stopped: past a terawatt. Nothing here models the fuel heating up, which in a real reactor would push k down (or destroy the core).'); stopKinetics(); }
+    if (P > 1e12) { addCaption(`Stopped: past a terawatt.${plant ? '' : ' Nothing here models the fuel heating up, which in a real reactor would push k down (or destroy the core).'}`); stopKinetics(); }
     if (++kin.frames % 6 === 0 || moved) { renderKinetics(); renderRods(); }
+    panelUpdate();
+  }
+
+  // ---------- the control room panel (AP1000 and Sequoyah) ----------
+
+  const panel = createControlPanel($('#chain-panel'), {
+    control(ref, v) {
+      if (!plant) return;
+      const c = plant.ctl;
+      if (ref === 'rodMode') { c.rodMode = v; rods.target = rods.now; rods.rate = null; }
+      else if (ref === 'makeup') c.makeup = v;
+      else if (ref === 'gpm') c.gpm = v;
+      else if (ref === 'loadSet') c.loadSet = v;
+      else if (ref === 'loadRate') c.loadRate = +v;
+    },
+    lever(v) {
+      if (!plant) return;
+      plant.ctl.lever = v;
+      if (!v) { rods.target = rods.now; rods.rate = null; }
+      if (v > 0 && kin && plant.trip.latched) addCaption('Rod withdrawal is blocked: the reactor trip breakers are open. Press <b>TRIP RESET</b> first.');
+    },
+    pump(i) {
+      if (!plant) return;
+      plant.ctl.pumps[i] = !plant.ctl.pumps[i];
+      if (kin) addCaption(`Reactor coolant pump ${plant.ctl.pumps[i] ? 'started' : 'stopped: it coasts down over about half a minute'}.`);
+    },
+    speed(v) { kSpeed = v; render(); },
+    action(a) {
+      if (a === 'run') { kin ? stopKinetics() : startKinetics(); return; }
+      if (a === 'trip') { manualTrip(); return; }
+      if (!plant || !kin) return;
+      const c = plant.ctl;
+      if (a === 'reset') {
+        const err = plant.resetTrip();
+        if (err) addCaption(err);
+        else if (kin.tripped) { kin.tripped = false; addCaption('Trip reset: the trip breakers are closed and the rods can be withdrawn again.'); }
+      } else if (a === 'latch') {
+        const err = plant.latchTurbine();
+        addCaption(err ?? 'Turbine latched and rolled to 1,800 rpm, generator synchronized. Turn up <b>LOAD SETPOINT</b>; the load follows at the <b>LOAD RATE</b>.');
+      } else if (a === 'turbtrip') {
+        const why = plant.tripTurbine(true);
+        if (why) scram(why);
+        else addCaption('Turbine tripped. The steam dumps open to carry the core’s heat to the condenser.');
+      } else if (a === 'srblock') {
+        if (c.srBlock || plant.P6) c.srBlock = !c.srBlock;
+      } else if (a === 'prblock') {
+        if (c.prBlock || plant.P10) c.prBlock = !c.prBlock;
+      }
+    },
+  });
+
+  function panelUpdate() {
+    const show = shown && pwr() && !!plant;
+    $('#chain-panel').hidden = !show;
+    if (!show) return;
+    panel.update({
+      plant, running: !!kin, ready: !!(pred?.k && pred?.rodCurve?.length === 3), rods: rods.now, banks: cfg.banks,
+      k: kin ? kin.k : null, rho: kin ? kin.rho : null, beta: pred?.k?.beta || 0.0075, speed: kSpeed, syncControls: panelSync,
+    });
+    panelSync = false;
   }
 
   // ---------- rendering ----------
@@ -347,12 +463,17 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
     $('#nuc-scale').textContent = pwr() ? `core ${(2 * spec().equivalentR / 100).toFixed(2)} m across, ${(spec().H / 100).toFixed(2)} m tall` : r ? `core radius ${cfg.R < 100 ? `${cfg.R.toFixed(0)} cm` : `${(cfg.R / 100).toFixed(2)} m`}` : `fuel radius ${cfg.R.toFixed(1)} cm`;
     renderClock();
     renderStatic();
+    $('#chain-trip').parentElement.title = pwr()
+      ? 'The reactor protection system: trip on the real setpoints (source range 10⁵ cps, power range 109%, pressurizer pressure, coolant flow, …)'
+      : 'Drop the rods automatically if the power rises faster than ×e in 10 s, or passes 10 MW';
+    panelSync = true;
+    panelUpdate();
   }
 
   function renderRods() {
     if (!reactor()) return;
     $('#chain-rods-value').textContent = `${(100 * rods.now).toFixed(1)}% in${rods.now !== rods.target ? ` → ${(100 * rods.target).toFixed(1)}%` : ''}`;
-    const k = kNow(), el = $('#chain-know');
+    const k = kTotal(), el = $('#chain-know');
     if (el && k != null) el.innerHTML = kCardHTML(k);
   }
 
@@ -542,8 +663,8 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
       ? `A PWR controls its chain three ways. <b>Boron dissolved in the water</b> (as boric acid) evens out slow changes: the plant dilutes it month by month as the fuel burns. <b>Burnable absorbers</b> (here borosilicate-glass rods in the guide tubes of fresh fuel) soak up neutrons early on and burn away. <b>Rod clusters</b> handle fast changes: Sequoyah has 53, each of 24 silver–indium–cadmium rodlets, in four shutdown banks (SA–SD, kept out while running) and four control banks (A–D). To start up, operators pull the shutdown banks, then the control banks in turn, and reach critical on <b>bank D</b>; pick <b>Bank D only</b> to do that last step with the others already out. The drives move 72 steps of ⅝ inch a minute, so a full pull takes about three minutes. In 2019 Unit 1’s centre rod (H-8, bank D) kept dropping in, and the unit ran a whole cycle with 52.`
       : `A PWR controls its chain three ways. <b>Boron dissolved in the water</b> (as boric acid) evens out slow changes: the plant dilutes it month by month as the fuel burns. <b>Burnable absorbers</b> in fresh fuel soak up neutrons early on and burn away as the fuel does. <b>Rod clusters</b> handle fast changes: 53 “black” clusters of 24 silver–indium–cadmium rodlets, and 16 “gray” ones with half the absorber, used to follow the load. Here all 69 move together at the real drives’ top speed of 45 inches a minute, so a full pull takes about four minutes. The water is also the moderator: its hydrogen slows the neutrons, and boron in it catches some of them, so each ppm of boron takes away about 0.008% of k.`;
     const note = sqn
-      ? `How it’s modeled: every fuel rod (UO₂ pellet, helium gap, Zircaloy cladding), guide tube, rodlet and glass absorber rod of a fresh first core, in borated water, with the steel baffle round the core and water out to the core barrel. The rod-cluster positions and banks are Sequoyah’s, from TVA’s 2019 filing with the NRC; the 17 × 17 fuel, the 12 ft core and the hot-zero-power state (557 °F, water at 0.743 g/cm³) are those of its twin, Watts Bar Unit 1, whose first-core loading (2.11%, 2.62% and 3.10% fuel, 1,712 Pyrex rods) and startup measurements ORNL published as the VERA benchmark; Sequoyah’s own first core was of the same Westinghouse design. Checks against those measurements: rods out at 1,291 ppm this model gives k = 1.010 ± 0.002 (so critical near 1,375 ppm, 85 ppm high); bank D is worth 1,305 ± 300 pcm (measured 1,342); boron worth about −9 pcm/ppm (measured −10.8). Approximate: which guide tubes hold the glass rods (the counts are right), the baffle (two rod cells of steel), and the gap between assemblies (shared out among the rod cells); spacer grids and nozzles are left out. Sequoyah today runs on part-burned fuel (Framatome, now changing to Westinghouse), which needs burn-up to model. Not modeled: power and its temperature feedback, xenon, and burn-up.`
-      : `How it’s modeled: every fuel rod (UO₂ pellet, helium gap, zirconium-alloy cladding), guide tube, rodlet and burnable absorber of the first core, in borated water inside the core barrel, from Westinghouse’s Design Control Document (Rev. 19). Hot zero power is 557 °F, water at 0.743 g/cm³, with ²³⁸U’s resonances Doppler-broadened and thermal neutrons in a Maxwell spread at that temperature. Checked against ORNL’s VERA benchmark for this fuel (a fuel-rod cell, an assembly, and an assembly with 24 Ag–In–Cd rods), all within 0.4%; at 1,382 ppm the whole core comes out at k = 1.000 ± 0.005, as published. Reconstructed, not published: which assemblies hold the rod clusters and burnable absorbers (symmetric, matching the published counts), so the rods come out worth less than the design’s 12.7%. The gap between assemblies is shared out among the rod cells; spacer grids, nozzles and the steel core shroud are left out (water instead). Not modeled: power and its temperature feedback, xenon, and burn-up.`;
+      ? `How it’s modeled: every fuel rod (UO₂ pellet, helium gap, Zircaloy cladding), guide tube, rodlet and glass absorber rod of a fresh first core, in borated water, with the steel baffle round the core and water out to the core barrel. The rod-cluster positions and banks are Sequoyah’s, from TVA’s 2019 filing with the NRC; the 17 × 17 fuel, the 12 ft core and the hot-zero-power state (557 °F, water at 0.743 g/cm³) are those of its twin, Watts Bar Unit 1, whose first-core loading (2.11%, 2.62% and 3.10% fuel, 1,712 Pyrex rods) and startup measurements ORNL published as the VERA benchmark; Sequoyah’s own first core was of the same Westinghouse design. Checks against those measurements: rods out at 1,291 ppm this model gives k = 1.010 ± 0.002 (so critical near 1,375 ppm, 85 ppm high); bank D is worth 1,305 ± 300 pcm (measured 1,342); boron worth about −9 pcm/ppm (measured −10.8). Approximate: which guide tubes hold the glass rods (the counts are right), the baffle (two rod cells of steel), and the gap between assemblies (shared out among the rod cells); spacer grids and nozzles are left out. Sequoyah today runs on part-burned fuel (Framatome, now changing to Westinghouse), which needs burn-up to model. Not modeled: xenon and burn-up.`
+      : `How it’s modeled: every fuel rod (UO₂ pellet, helium gap, zirconium-alloy cladding), guide tube, rodlet and burnable absorber of the first core, in borated water inside the core barrel, from Westinghouse’s Design Control Document (Rev. 19). Hot zero power is 557 °F, water at 0.743 g/cm³, with ²³⁸U’s resonances Doppler-broadened and thermal neutrons in a Maxwell spread at that temperature. Checked against ORNL’s VERA benchmark for this fuel (a fuel-rod cell, an assembly, and an assembly with 24 Ag–In–Cd rods), all within 0.4%; at 1,382 ppm the whole core comes out at k = 1.000 ± 0.005, as published. Reconstructed, not published: which assemblies hold the rod clusters and burnable absorbers (symmetric, matching the published counts), so the rods come out worth less than the design’s 12.7%. The gap between assemblies is shared out among the rod cells; spacer grids, nozzles and the steel core shroud are left out (water instead). Not modeled: xenon and burn-up.`;
     $('#nuc-info').innerHTML = `<div class="info-head"><div>${head}</div></div>
       <div class="beam-grid">
         <div><h3>One fuel assembly</h3>${latticeHTML}</div>
@@ -554,7 +675,8 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
         <div><h3>Watching the neutrons (microseconds)</h3><div id="chain-live"></div><div id="chain-chart"></div></div>
       </div>
       <p class="explain">${explain}</p>
-      <p class="note">${note}</p>`;
+      <p class="explain"><b>The control panel</b> under the core is laid out like ${sqn ? 'the analog main control board of a Westinghouse four-loop plant such as Sequoyah: edgewise meters, an IN–HOLD–OUT rod lever, mechanical step counters, J-handle pump switches and windows of annunciators' : 'the AP1000’s main control room, where the reactor operator works at screens (soft controls) under a wall panel showing the whole plant, with a small set of hardwired switches on the dedicated safety panel for tripping the reactor'}. Red lamps mean running or closed, green stopped or open, as in US plants. The meters follow the plant over seconds to hours: start up on the rods, block the source-range trip at P-6 and the low-power trips at P-10, heat the coolant, load the turbine, and let automatic rod control hold Tavg on its program while you dilute the boron.</p>
+      <p class="note">How the plant is modeled: the core’s power comes from the point-kinetics run (six delayed-neutron groups), with k from the Monte Carlo rod curve, the boron worth from the same run, a Doppler coefficient of −1.6 pcm/°F of fuel temperature and a moderator coefficient that runs from ${(-30 + 0.02 * cfg.boron).toFixed(1).replace('-', '−')} pcm/°F at ${Math.round(cfg.boron)} ppm to −30 with no boron. Lumped heat balances follow the fuel, the reactor coolant (Thot and Tcold from the flow of four pumps, which coast down when stopped) and the steam generators, which feed the turbine, the steam dumps (40% of full steam flow, holding 1,092 psig at no load, or on Tavg after a load rejection) and the safety valves (1,185 psig). Decay heat builds up and dies away in six groups (about 6% just after a trip from long operation). Design values: ${sqn ? '3,455 MW of heat, Tavg 557 °F at no load (this core’s reference state) to 588 °F at full load, and 61 °F across the core: a typical four-loop program, approximate for Sequoyah' : '3,400 MW of heat, Tavg 557 → 573.6 °F, Thot 610 °F and Tcold 535 °F at full power'}. The protection system trips on the standard Westinghouse setpoints: source range 10⁵ cps (blockable above P-6), intermediate range and low power range 25% (blockable above P-10), power range 109%, a positive rate of 5% in 2 s, pressurizer pressure 2,385 psig high and 1,970 psig low, coolant flow, a simplified overtemperature ΔT${sqn ? ', and a turbine trip above 50% power (P-9)' : '; the AP1000 rides out a turbine trip on its steam dumps and rod control, as designed'}. Rod control moves all the clusters together, 48 steps a minute by hand and 8–72 in automatic. Simplified: the pressurizer (pressure from the coolant’s swell, with heaters and sprays; level on program), the steam generator level (swell and shrink only), the turbine (no warm-up, synchronizing or valve testing) and the instrument ranges. Not modeled: xenon, burn-up, and the safety-injection and passive cooling systems.</p>`;
     renderLive();
     renderKinetics();
   }
@@ -714,12 +836,19 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
   $('#chain-pitch').addEventListener('input', (e) => { cfg.pitch = 10 ** +e.target.value; rebuild(); });
   $('#chain-core').addEventListener('input', (e) => { cfg.R = 10 ** +e.target.value; rebuild(); });
   $('#chain-rods').addEventListener('input', (e) => {
-    rods.target = +e.target.value / 100;
+    const target = +e.target.value / 100;
+    if (kin && plant?.trip.latched && target < rods.now) {
+      e.target.value = 100 * rods.target;
+      addCaption('Rod withdrawal is blocked: the reactor trip breakers are open. Press <b>TRIP RESET</b> on the panel first.');
+      return;
+    }
+    rods.target = target;
+    rods.rate = null;
     rods.scram = false;
-    if (kin) kin.tripped = false; // re-armed
+    if (kin && !plant) kin.tripped = false; // re-armed
     renderRods();
   });
-  $('#chain-scram').addEventListener('click', () => scram(kin ? 'by hand' : null));
+  $('#chain-scram').addEventListener('click', manualTrip);
   $('#chain-run').addEventListener('click', () => (kin ? stopKinetics() : startKinetics()));
   $('#chain-kspeed').addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -767,6 +896,7 @@ export function createChainUI({ addCaption, clearCaptions, onOpenFission }) {
       shown = on;
       $('#nuc-chain').hidden = !on;
       $('#nuc-chain-controls').hidden = !on;
+      panelUpdate();
       viewer.setActive(on && active);
       renderHud();
       if (on && !pred && !workers.length) predict();

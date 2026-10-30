@@ -387,6 +387,49 @@ measurements:
 The panel shows the statistical uncertainty on the critical boron and rod
 worths, which comes from separate Monte Carlo runs.
 
+*Control room panel* (AP1000 and Sequoyah): under the core view sits a
+working control panel. For the AP1000 it follows that plant's digital main
+control room: screens at the reactor operator's workstation, a wall panel
+showing the whole plant, and hardwired switches on the dedicated safety panel.
+For Sequoyah it follows the analog benchboards of a Westinghouse four-loop
+plant: edgewise meters, an IN–HOLD–OUT rod lever, a mechanical step counter
+and J-handle pump switches. Both have:
+
+- **Instruments:** source, intermediate and power range nuclear instruments,
+  a startup-rate meter and a reactivity computer.
+- **Coolant meters:** Tavg against its program, Thot and Tcold, pressurizer
+  pressure and level, steam pressure, steam generator level and generator
+  output.
+- **Status:** 24 annunciator windows (acknowledge and reset), rod position
+  lights for each bank, and a plant mimic.
+- **Controls:** rod lever and manual/auto selector, boration and dilution with
+  a flow dial, turbine latch, trip and load setpoint, the four coolant pumps,
+  manual reactor trip and trip reset, and the source-range (P-6) and
+  low-power (P-10) trip blocks.
+
+Behind it, `js/plant.js` adds the rest of the plant to the point kinetics:
+
+- Fuel and coolant temperatures, with Doppler and moderator-temperature
+  feedback.
+- Boron worth taken from the core's Monte Carlo run.
+- Steam generators, turbine, steam dumps and safety valves.
+- The pressurizer.
+- Decay heat in six groups.
+- Westinghouse rod control: 48 steps a minute by hand, 8–72 in automatic on
+  the Tavg error.
+- The reactor protection system on the standard setpoints.
+
+A scripted startup takes the AP1000 from hot standby to full power. There it
+settles at Thot 610 °F and Tcold 535 °F, with steam near 810 psig and about
+1,150 MWe, close to the published design. A full turbine trip trips Sequoyah
+(above P-9). The AP1000 rides it out on its 40% steam dumps and rod control,
+as it is designed to.
+
+Simplified: all rod clusters move together, so each step is worth several
+times one real bank's step; the pressurizer and steam generator levels; and
+the turbine's startup. Not modeled: xenon, burn-up and the emergency cooling
+systems.
+
 In both systems a bar at the top of the view shows the **neutrons produced**
 so far (by fission, delayed emission and (n,2n), not counting the source), the
 **production rate** per second, and the **trend**: speeding up, steady or
@@ -499,5 +542,7 @@ stand-ins for things too small to draw (the nucleus glint and the quarks).
 - `js/chain-worker.js`: computes k and the critical size off the main thread (the page runs several at once, one task each)
 - `js/chain-viewer.js`: the 3D chain-reaction scene and live simulation
 - `js/chain-ui.js`: chain-reaction controls and readout
+- `js/plant.js`: the rest of a PWR plant for the control panel (temperatures and feedback, steam generators, turbine, pressurizer, decay heat, boron makeup, rod control, reactor protection)
+- `js/control-panel.js`: the AP1000 and Sequoyah control room panel (meters, annunciators, mimic, levers, dials and switches)
 - `js/nucleus-ui.js`: Nucleus mode controls and info
 - `js/main.js`: UI wiring and mode switching
